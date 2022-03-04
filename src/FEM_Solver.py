@@ -1,5 +1,4 @@
 import numpy as np
-import matplotlib.pyplot as plt
 from typing import Callable, Union
 from quadrature_rules import gauss_lobatto_jacobi_quadrature1D, integrate_1d
 
@@ -23,7 +22,7 @@ class FEM_Helmholtz():
             ga (complex): Value of the left boundary condition.
             gb (complex): Value of the right boundary condition.
             N (int, optional): Number of discretization points. Defaults to 50.
-            N_quad (int, optional): Number of quadrature points.
+            N_quad (int, optional): Number of quadrature points for int(f * phi).
         """
 
         self.f = f
@@ -31,10 +30,11 @@ class FEM_Helmholtz():
         self.a, self.b = a, b
         self.ga, self.gb = ga, gb
         self.N = N
+        self.h = (b - a) / N
         if not N_quad:
             if self.N * 10 > 1000:
                 self.N_quad = 1000
-                print(f'Warning: More quadrature points are needed for N={self.N}. The final accuracy might be affected.')
+                # print(f'Warning: More quadrature points are needed for N={self.N}. The final accuracy might be affected.')
             else:
                 self.N_quad = self.N * 10
         else:
@@ -48,24 +48,27 @@ class FEM_Helmholtz():
         self.sol = None
 
         self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(self.N_quad, a, b)
+        self.roots, self.weights = self.roots.numpy(), self.weights.numpy()
 
     def solve(self):
         """Executes the method.
         """
 
         for i in range(self.N + 1):
-            phi_i = self.phi(i)
-            phi_x_i = self.phi_x(i)
-            self.d[i] = self.rhs(phi_i)
-            for j in range(self.N + 1):
-                phi_j = self.phi(j)
-                phi_x_j = self.phi_x(j)
-                self.A[i, j] = self.lhs(phi_j, phi_i, phi_x_j, phi_x_i)
+            self.d[i] = self.rhs(i)
+            self.A[i, i] = self.lhs(i, i)
+            if i != 0:
+                self.A[i, i - 1] = self.lhs(i, i - 1)
+            if i != self.N:
+                self.A[i, i + 1] = self.lhs(i, i + 1)
 
         self.c = np.linalg.solve(self.A, self.d)
         self.sol = lambda x: np.sum(np.array(
-            [self.c[i] * self.phi(i)(x) for i in range(self.N + 1)]
-            ))
+            [[self.c[i] * self.phi(i)(x)] for i in range(self.N + 1)]
+            ), axis=0)
+        self.der = lambda x: np.sum(np.array(
+            [[self.c[i] * self.phi_x(i)(x)] for i in range(self.N + 1)]
+            ), axis=0)
 
     def phi(self, i: int) -> Callable:
         """Returns the basis functions of the V_N subspace
@@ -78,8 +81,10 @@ class FEM_Helmholtz():
         """
 
         xi = self.x[i]
-        rng = (self.b - self.a)
-        return lambda x: 1 - np.abs((x - xi)) * self.N / rng
+        x_before = self.x[i - 1] if i != 0 else xi
+        x_after = self.x[i + 1] if i != self.N else xi
+        return lambda x: (1 - np.abs((x - xi)) / self.h)\
+             * (np.heaviside(x - x_before, 1) - np.heaviside(x - x_after, 0))
 
     def phi_x(self, i: int) -> Callable:
         """Returns the derivative of the basis function.
@@ -92,42 +97,91 @@ class FEM_Helmholtz():
         """
 
         xi = self.x[i]
-        rng = (self.b - self.a)
-        slope = self.N / rng
-        return lambda x: -slope * np.sign(x - xi)
+        x_before = self.x[i - 1] if i != 0 else xi
+        x_after = self.x[i + 1] if i != self.N else xi
+        return lambda x: -(1 / self.h) * np.sign(x - xi)\
+            * (np.heaviside(x - x_before, 0) - np.heaviside(x - x_after, 1))
 
-    def lhs(self, u: Callable, v: Callable, u_x: Callable, v_x: Callable) -> complex:
-        """Computes the left-hand-side of the system of the equation:
-            int(u_x * v_x) - k^2 * int(u * v) - 1j * k * (u(a) * v(a) + u(b) * v(b))
+    def lhs(self, i, j) -> complex:
+        """Computes the left-hand-side of the system of the equations:
+            int(phi_x_i * phi_x_j) - k^2 * int(phi_i * phi_j)
+            - 1j * k * (phi_i(a) * phi_j(a) + phi_i(b) * phi_j(b))
 
         Args:
-            u (Callable): Basis function.
-            v (Callable): Test function.
-            u_x (Callable): Derivative of the basis function.
-            v_x (Callable): Derivative of the test function.
+            i (int): Index of the basis function.
+            j (int): Index of the test function.
 
         Returns:
             complex: The left-hand-side of the equation.
         """
 
-        uv = lambda x: u(x) * v(x)
-        uxvx = lambda x: u_x(x) * v_x(x)
-        return self.intg(uxvx) - self.k ** 2 * self.intg(uv)\
-            - 1j * self.k * (u(self.a) * v(self.a) + u(self.b) * v(self.b))
+        phi_i = self.phi(i)
+        phi_j = self.phi(j)
+        return self.intphi_x(i, j) - self.k ** 2 * self.intphi(i, j)\
+            - 1j * self.k * (phi_i(self.a) * phi_j(self.a) + phi_i(self.b) * phi_j(self.b))
 
-    def rhs(self, v: Callable) -> complex:
-        """Computes the left-hand-side of the system of the equation:
-            int(f * v) - ga * v(a) + gb * v(b)
+    def rhs(self, j: int) -> complex:
+        """Computes the right-hand-side of the system of the equations:
+            int(f * phi_j) - ga * phi_j(a) + gb * phi_j(b)
 
         Args:
-            v (Callable): Test function.
+            j (int): Index of the test function.
 
         Returns:
             complex: The right-hand-side of the equation.
         """
 
-        fv = lambda x: self.f(x) * v(x)
-        return self.intg(fv) - self.ga * v(self.a) + self.gb * v(self.b)
+        phi_j = self.phi(j)
+
+        # fv = lambda x: self.f(x) * phi_j(x)
+        # intfv = self.intg(fv)
+        intfv = self.f(.5 * self.b + .5 * self.a) * self.h
+        if j == 0 or j == self.N:
+            intfv = intfv / 2
+
+        return intfv - self.ga * phi_j(self.a) + self.gb * phi_j(self.b)
+
+    def intphi(self, i: int, j: int) -> float:
+        """Calculates int(phi_i * phi_j) over the domain, 0 <= i, j <= N.
+
+        Args:
+            i (int): Index of the basis function.
+            j (int): Index of the test function.
+
+        Returns:
+            float: The value of the integral.
+        """
+
+        if i == j:
+            if i == 0 or i == self.N:
+                return self.h / 3
+            else:
+                return self.h * 2 / 3
+        elif abs(i - j) == 1:
+            return self.h / 6
+        else:
+            return 0
+
+    def intphi_x(self, i: int, j: int) -> float:
+        """Calculates int(phi_x_i * phi_x_j) over the domain, 0 <= i, j <= N.
+
+        Args:
+            i (int): Index of the basis function.
+            j (int): Index of the test function.
+
+        Returns:
+            float: The value of the integral.
+        """
+
+        if i == j:
+            if i == 0 or i == self.N:
+                return 1 / self.h
+            else:
+                return 2 / self.h
+        elif abs(i - j) == 1:
+            return -1 / self.h
+        else:
+            return 0
 
     def intg(self, f: Callable) -> complex:
         """Integrator of the method.
@@ -141,6 +195,24 @@ class FEM_Helmholtz():
 
         y = integrate_1d(f, self.a, self.b, self.weights, self.roots).item()
         return y
+
+    def H1_error(self, u: Callable, u_x: Callable) -> float:
+        """Computes the H1 error:
+        .. math::
+            \\sqrt{||u - u^N||_{L^2}^2 + ||\\frac{du}{dx} - \\frac{du^N}{dx}||_{L^2}^2}
+
+        Args:
+            u (Callable): Exact solution
+            u_x (Callable): Exact derivative of the solution
+
+        Returns:
+            float: H1 error of the solution
+        """
+
+        u2 = lambda x: abs(u(x) - self.sol(x)) ** 2
+        ux2 = lambda x: abs(u_x(x) - self.der(x)) ** 2
+        return np.sqrt(self.intg(u2)) + np.sqrt(self.intg(ux2))
+
 
     def __call__(self, x: float) -> complex:
         """Returns the solution of the equation.
