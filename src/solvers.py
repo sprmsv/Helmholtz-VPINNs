@@ -10,21 +10,24 @@ class FEM_HelmholtzImpedance():
         + u_x(b) - 1j * k * u(b) = gb
     """
 
-    def __init__(self, f: Callable, k: float, a: float, b: float, \
-        ga: complex, gb: complex, N: int =50, N_quad: int =None):
+    def __init__(self, f: Union[Callable, float], k: float, a: float, b: float, \
+        ga: complex, gb: complex, /, source: str ='const', N: int =50, N_quad: int =None):
+
         """Initializing the parameters
 
         Args:
-            f (Callable): Source function.
+            f (function or float): Source function or the coefficient.
             k (float): Equation coefficient.
             a (float): Left boundary.
             b (float): Right boundary.
             ga (complex): Value of the left boundary condition.
             gb (complex): Value of the right boundary condition.
+            source (str): Type of the source function. Valid values are: 'const', 'func'.
             N (int, optional): Number of discretization points. Defaults to 50.
             N_quad (int, optional): Number of quadrature points for int(f * phi).
         """
 
+        self.source = source
         self.f = f
         self.k = k
         self.a, self.b = a, b
@@ -143,11 +146,15 @@ class FEM_HelmholtzImpedance():
 
         phi_j = self.phi(j)
 
-        # fv = lambda x: self.f(x) * phi_j(x)
-        # intfv = self.intg(fv)
-        intfv = self.f(.5 * self.b + .5 * self.a) * self.h
-        if j == 0 or j == self.N:
-            intfv = intfv / 2
+        if self.source is 'const':
+            intfv = self.f * self.h
+            if j == 0 or j == self.N:
+                intfv = intfv / 2
+        elif self.source is 'func':
+            fv = lambda x: self.f(x) * phi_j(x)
+            intfv = self.intg(fv)
+        else:
+            raise ValueError(f'{self.source} is not a valid source type.')
 
         return intfv + self.ga * phi_j(self.a) + self.gb * phi_j(self.b)
 
@@ -252,7 +259,7 @@ class FEM_HelmholtzImpedance():
 class Exact_HelmholtzImpedance():
 # FIXME: Faces an error in integrate_1D()
 # TODO: Add calculation of u_x
-    def __init__(self, f: Callable, f_x: Callable,\
+    def __init__(self, f: Union[Callable, float], f_x: Callable,\
         k: float, a: float, b: float, ga: complex, gb: complex):
 
         self.f = f
