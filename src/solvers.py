@@ -2,12 +2,12 @@ import numpy as np
 from typing import Callable, Union
 from quadrature_rules import gauss_lobatto_jacobi_quadrature1D, integrate_1d
 
-class FEM_Helmholtz():
-    """ Finite Element Method solver class for solving the 1D Helmholtz equation:
-        -u_xx - k^2 * u = f
+class FEM_HelmholtzImpedance():
+    """ Finite Element Method solver class for solving the 1D Helmholtz Impendace problem:
+        - u_xx - k^2 * u = f
     in the domain (a, b), with impedance boundary conditions:
-        u_x(a) + 1j * k * u(a) = ga
-        u_x(b) - 1j * k * u(b) = gb
+        - u_x(a) + 1j * k * u(a) = ga
+        + u_x(b) - 1j * k * u(b) = gb
     """
 
     def __init__(self, f: Callable, k: float, a: float, b: float, \
@@ -132,7 +132,7 @@ class FEM_Helmholtz():
 
     def rhs(self, j: int) -> complex:
         """Computes the right-hand-side of the system of the equations:
-            int(f * phi_j) - ga * phi_j(a) + gb * phi_j(b)
+            int(f * phi_j) + ga * phi_j(a) + gb * phi_j(b)
 
         Args:
             j (int): Index of the test function.
@@ -149,7 +149,7 @@ class FEM_Helmholtz():
         if j == 0 or j == self.N:
             intfv = intfv / 2
 
-        return intfv - self.ga * phi_j(self.a) + self.gb * phi_j(self.b)
+        return intfv + self.ga * phi_j(self.a) + self.gb * phi_j(self.b)
 
     def intphi(self, i: int, j: int) -> float:
         """Calculates int(phi_i * phi_j) over the domain, 0 <= i, j <= N.
@@ -194,7 +194,7 @@ class FEM_Helmholtz():
             return 0
 
     def intg(self, f: Callable) -> complex:
-        """Integrator of the method.
+        """Integrator of the class.
 
         Args:
             f (Callable): Function to be integrated.
@@ -248,3 +248,71 @@ class FEM_Helmholtz():
             print(f'Call {self.__class__.__name__}.solve() to find the FEM solution first.')
             return
         return self.sol(x), self.der(x)
+
+class Exact_HelmholtzImpedance():
+# FIXME: Faces an error in integrate_1D()
+# TODO: Add calculation of u_x
+    def __init__(self, f: Callable, f_x: Callable,\
+        k: float, a: float, b: float, ga: complex, gb: complex):
+
+        self.f = f
+        self.f_x = f_x
+        self.k = k
+        self.a, self.b = a, b
+        self.ga, self.gb = ga, gb
+
+        self.N_quad = 100
+        self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(self.N_quad, a, b)
+        self.roots, self.weights = self.roots.numpy(), self.weights.numpy()
+
+    def w(self, x) -> Callable:
+        return -np.exp(1j * self.k) / (2j * self.k)\
+            * (self.ga * np.exp(1j * self.k * x)
+                + self.gb * np.exp(-1j * self.k * x))
+
+    def uG(self, x) -> Callable:
+        Hf = lambda s: self.H(x, s) * self.f(s)
+        Hf_x = lambda s: self.H(x, s) * self.f_x(s)
+        return Hf(self.b) - Hf(self.a) - self.intg(Hf_x, self.a, self.b)
+
+    def H(self, x, s):
+        G = lambda t: np.exp(1j * self.k * np.abs(x - t)) / (2j * self.k)
+        return self.intg(G, self.a, s)
+
+    def intg(self, f: Callable, a: float =None, b: float=None) -> complex:
+        """Integrator of the class.
+
+        Args:
+            f (Callable): Function to be integrated.
+            a (float): Left boundary.
+            b (float): Right boundary.
+
+        Returns:
+            complex: Integral over the domain (a, b) with N_quad quadrature points.
+        """
+
+        roots, weights = gauss_lobatto_jacobi_quadrature1D(self.N_quad, a, b)
+        roots, weights = roots.numpy(), weights.numpy()
+
+        return integrate_1d(f, a, b, weights, roots).item()
+
+    def __call__(self):
+        u = lambda x: self.uG(x) + self.w(x)
+        return u
+
+def Exact_HelmholtzImpedance_const(f: float, k: float,\
+    a: float, b: float, ga: complex, gb: complex):
+
+    uG = lambda x: f / (2 * k ** 2) * np.exp(1j * k) * np.cos(k * x)
+    uG_x = lambda x: -f / (2 * k) * np.exp(1j * k) * np.sin(k * x)
+    w = lambda x: -np.exp(1j * k) / (2j * k)\
+            * (ga * np.exp(1j * k * x)
+                + gb * np.exp(-1j * k * x))
+    w_x = lambda x: -np.exp(1j * k) / 2\
+            * (ga * np.exp(1j * k * x)
+                - gb * np.exp(-1j * k * x))
+
+    u = lambda x: uG(x) + w(x)
+    u_x = lambda x: uG_x(x) + w_x(x)
+
+    return u, u_x
