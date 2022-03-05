@@ -46,6 +46,7 @@ class FEM_Helmholtz():
 
         self.c = None
         self.sol = None
+        self.der = None
 
         self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(self.N_quad, a, b)
         self.roots, self.weights = self.roots.numpy(), self.weights.numpy()
@@ -81,10 +82,12 @@ class FEM_Helmholtz():
         """
 
         xi = self.x[i]
+
         x_before = self.x[i - 1] if i != 0 else xi
         x_after = self.x[i + 1] if i != self.N else xi
-        return lambda x: (1 - np.abs((x - xi)) / self.h)\
-             * (np.heaviside(x - x_before, 1) - np.heaviside(x - x_after, 0))
+        step = lambda x: np.heaviside(x - x_before, 1) - np.heaviside(x - x_after, 0)
+
+        return lambda x: step(x) * (1 - np.abs((x - xi)) / self.h)
 
     def phi_x(self, i: int) -> Callable:
         """Returns the derivative of the basis function.
@@ -97,10 +100,17 @@ class FEM_Helmholtz():
         """
 
         xi = self.x[i]
+
         x_before = self.x[i - 1] if i != 0 else xi
         x_after = self.x[i + 1] if i != self.N else xi
-        return lambda x: -(1 / self.h) * np.sign(x - xi)\
-            * (np.heaviside(x - x_before, 0) - np.heaviside(x - x_after, 1))
+        step = lambda x: np.heaviside(x - x_before, 1) - np.heaviside(x - x_after, 0)
+
+        if i == 0:
+            return lambda x: step(x) * -(1 / self.h) * (+1)
+        elif i == self.N:
+            return lambda x: step(x) * -(1 / self.h) * (-1)
+        else:
+            return lambda x: step(x) * -(1 / self.h) * np.sign(x - xi)
 
     def lhs(self, i, j) -> complex:
         """Computes the left-hand-side of the system of the equations:
@@ -207,11 +217,21 @@ class FEM_Helmholtz():
 
         Returns:
             float: H1 error of the solution
+            float: L2 norm of the solution
+            float: L2 norm of the derivative of the solution
         """
+
+        if not self.sol:
+            print(f'Call {self.__class__.__name__}.solve() to find the FEM solution first.')
+            return
 
         u2 = lambda x: abs(u(x) - self.sol(x)) ** 2
         ux2 = lambda x: abs(u_x(x) - self.der(x)) ** 2
-        return np.sqrt(self.intg(u2)) + np.sqrt(self.intg(ux2))
+
+        err_u = np.sqrt(self.intg(u2))
+        err_u_x = np.sqrt(self.intg(ux2))
+
+        return err_u + err_u_x, err_u, err_u_x
 
 
     def __call__(self, x: float) -> complex:
@@ -227,4 +247,4 @@ class FEM_Helmholtz():
         if not self.sol:
             print(f'Call {self.__class__.__name__}.solve() to find the FEM solution first.')
             return
-        return self.sol(x)
+        return self.sol(x), self.der(x)
