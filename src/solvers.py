@@ -394,7 +394,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 # x = self.drops[i - 1](x)  # Drop-out
         return x
 
-    def train_(self, epochs: int, testfunctions: list[Callable], optimizer: torch.optim.Optimizer, cuda=False):
+    def train_(self, epochs: int, testfunctions: list, optimizer: torch.optim.Optimizer, cuda=False):
 
         if cuda and not torch.cuda.is_available():
             raise Exception('Cuda is not available.')
