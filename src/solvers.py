@@ -1,6 +1,10 @@
 import numpy as np
 from typing import Callable, Union
 from quadrature_rules import gauss_lobatto_jacobi_quadrature1D, integrate_1d
+import torch
+from torch import nn
+from numpy.polynomial import Polynomial
+from utils import changeType
 
 class FEM_HelmholtzImpedance():
     """ Finite Element Method solver class for solving the 1D Helmholtz Impendace problem:
@@ -11,7 +15,7 @@ class FEM_HelmholtzImpedance():
     """
 
     def __init__(self, f: Union[Callable, float], k: float, a: float, b: float, \
-        ga: complex, gb: complex, /, source: str ='const', N: int =50, N_quad: int =None):
+        ga: complex, gb: complex, *, source: str ='const', N: int =50, N_quad: int =None):
 
         """Initializing the parameters
 
@@ -146,11 +150,11 @@ class FEM_HelmholtzImpedance():
 
         phi_j = self.phi(j)
 
-        if self.source is 'const':
+        if self.source == 'const':
             intfv = self.f * self.h
             if j == 0 or j == self.N:
                 intfv = intfv / 2
-        elif self.source is 'func':
+        elif self.source == 'func':
             fv = lambda x: self.f(x) * phi_j(x)
             intfv = self.intg(fv)
         else:
@@ -323,3 +327,168 @@ def Exact_HelmholtzImpedance_const(f: float, k: float,\
     u_x = lambda x: uG_x(x) + w_x(x)
 
     return u, u_x
+
+class VPINN_HelmholtzImpedance(nn.Module):
+    def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
+        ga: complex, gb: complex, *, layers=[1, 10, 1], activation=nn.ReLU, dropout_probs=None,
+        penalty=None, N_quad=80, seed=None):
+
+        if seed:
+            # Ensure reproducibility
+            torch.manual_seed(seed)
+            torch.backends.cudnn.benchmark = False
+            torch.use_deterministic_algorithms(True)
+
+        super(VPINN_HelmholtzImpedance, self).__init__()
+        self.f = f
+        self.k = changeType(k, 'Tensor')
+        self.a = changeType(a, 'Tensor').view(-1, 1).to(torch.cfloat)
+        self.b = changeType(b, 'Tensor').view(-1, 1).to(torch.cfloat)
+        self.ga = changeType(ga, 'Tensor').view(-1, 1).to(torch.cfloat)
+        self.gb = changeType(gb, 'Tensor').view(-1, 1).to(torch.cfloat)
+        self.penalty = penalty
+
+        self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(N_quad, a, b)
+        self.roots = self.roots.view(-1, 1).to(torch.cfloat)
+        self.weights = self.weights.view(-1, 1).float()
+
+        if dropout_probs:
+            assert len(dropout_probs) == len(layers) - 2
+
+        self.length = len(layers)  # Number of layers
+        self.activation = lambda x: activation(x.real) + 1j * activation(x.imag)
+        self.lins = nn.ModuleList()  # Linear blocks
+        self.drops = nn.ModuleList()  # Dropout
+        self.bns = nn.ModuleList()  # Batch-normalization
+
+        # Hidden layers
+        for input, output in zip(layers[0:-2], layers[1:-1]):
+            self.lins.append(nn.Linear(input, output, bias=True).to(torch.cfloat))
+            self.bns.append(nn.BatchNorm1d(output))  # FIXME: .to(torch.cfloat)) ?
+
+        # Output layer
+        self.lins.append(nn.Linear(layers[-2], layers[-1], bias=True).to(torch.cfloat))
+        self.bns.append(nn.BatchNorm1d(output))  # FIXME: .to(torch.cfloat)) ?
+
+        # Initialize weights
+        for lin in self.lins:
+            nn.init.xavier_normal_(lin.weight, gain=1.)
+
+        # Assign drop-out probabilities
+        if dropout_probs:
+            for p in dropout_probs:
+                self.drops.append(nn.Dropout(p=p))
+
+    # Forward function without batch-normalization and drop-out
+    def forward(self, x):
+        for i, f, bn in zip(range(self.length), self.lins, self.bns):
+            if i == len(self.lins) - 1:
+            # Last layer
+                x = f(x)
+                # x = bn(x)  # Batch-normalization
+            else:
+            # Hidden layers
+                x = f(x)
+                # x = bn(x)  # Batch-normalization
+                x = self.activation(x)
+                # x = self.drops[i - 1](x)  # Drop-out
+        return x
+
+    def train_(self, epochs: int, testfunctions: list[Callable], optimizer: torch.optim.Optimizer, cuda=False):
+
+        if cuda and not torch.cuda.is_available():
+            raise Exception('Cuda is not available.')
+        if cuda:
+            self.cuda()
+            optimizer.cuda()
+        self.train()
+
+        losses = []
+        K = len(testfunctions)
+        for epoch in range(epochs + 1):
+            loss = 0
+            for v_k in testfunctions:
+                loss += torch.abs(self.res(v_k, i=3)) ** 2 / K
+            if self.penalty:
+                loss_ga = torch.abs(self.ga + self.deriv(1, self.a) + 1j * self(self.a)) ** 2
+                loss_gb = torch.abs(self.gb - self.deriv(1, self.b) + 1j * self(self.b)) ** 2
+                loss += self.penalty / 2 * (loss_ga + loss_gb)
+
+            losses.append(loss.item())
+            if epoch % 100 == 0:
+                print(f'Epoch {epoch} / {epochs}: loss = {loss.item()}')
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+    def res(self, v_k: Polynomial, i: int):
+
+        u = lambda x: self.deriv(0, x)
+        u_x = lambda x: self.deriv(1, x)
+        u_xx = lambda x: self.deriv(2, x)
+
+        if i == 1:
+            R_k = - self.intg(lambda x: u_xx(x) * v_k(x)) \
+                - self.k ** 2 * self.intg(lambda x: u(x) * v_k(x))
+
+        elif i == 2:
+            # Consider replacing 0 with [u_x(x) * v_k(x)] at boundaries
+            # v_k has "compact support" so it should be zero at the boundaries?
+            R_k = + self.intg(lambda x: u_x(x) * v_k.deriv(1)(x)) \
+                - self.k ** 2 * self.intg(lambda x: u(x) * v_k(x))\
+                - 0
+
+        elif i == 3:
+            # Consider replacing 0 with [u_x(x) * v_k(x)] at boundaries
+            # v_k has "compact support" so it should be zero at the boundaries?
+            R_k = - self.intg(lambda x: u(x) * v_k.deriv(2)(x)) \
+                - self.k ** 2 * self.intg(lambda x: u(x) * v_k(x))\
+                - 0\
+                + (u(self.b) * v_k.deriv(1)(self.b)) - (u(self.a) * v_k.deriv(1)(self.a))
+
+        else:
+            raise ValueError(f'{i} is not a valid input for VPINN_HelmholtzImpedance.loss().')
+
+        F_k = self.intg(lambda x: self.f(x) * v_k(x))
+
+        return R_k - F_k
+
+    def deriv(self, n: int, x: torch.tensor, *, func: Callable = None):
+        if n not in [0, 1, 2]:
+            raise ValueError(f'n = {n} is not a valid derivative.')
+
+        x.requires_grad = True
+        if not func:
+            f = self(x)
+        else:
+            f = func(x)
+        if n >= 1:
+            grad = torch.ones(f.size(), dtype=f.dtype).to(f.device)
+            f_x = torch.autograd.grad(f, x, grad_outputs=grad, create_graph=True, allow_unused=False)
+        if n >= 2:
+            grad = torch.ones(f_x.size(), dtype=f.dtype).to(f.device)
+            f_xx = torch.autograd.grad(f_x, x, grad_outputs=None, create_graph=True, allow_unused=False)
+
+        if n == 0:
+            return f
+        elif n == 1:
+            return f_x[0]
+        elif n == 2:
+            return f_xx[0]
+
+    def intg(self, func: Callable) -> complex:
+        """Integrator of the class.
+
+        Args:
+            f (Callable): Function to be integrated.
+
+        Returns:
+            complex: Integral over the domain (a, b) with N_quad quadrature points.
+        """
+
+        integral = (self.b - self.a) * torch.sum(func(self.roots) * self.weights) / 2
+        return integral
+
+    def __len__(self):
+        return self.length - 2  # Number of hidden layers / depth
