@@ -331,13 +331,16 @@ def Exact_HelmholtzImpedance_const(f: float, k: float,\
 class VPINN_HelmholtzImpedance(nn.Module):
     def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
         ga: complex, gb: complex, *, layers=[1, 10, 1], activation=nn.ReLU, dropout_probs=None,
-        penalty=None, N_quad=80, seed=None):
+        penalty=None, N_quad=80, seed=None, cuda=False):
+
+        if cuda and not torch.cuda.is_available():
+            raise Exception('Cuda is not available.')
 
         if seed:
             # Ensure reproducibility
             torch.manual_seed(seed)
-            torch.backends.cudnn.benchmark = False
-            torch.use_deterministic_algorithms(True)
+            # torch.backends.cudnn.benchmark = True
+            # torch.use_deterministic_algorithms(True)
 
         super(VPINN_HelmholtzImpedance, self).__init__()
         self.f = f
@@ -351,6 +354,15 @@ class VPINN_HelmholtzImpedance(nn.Module):
         self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(N_quad, a, b)
         self.roots = self.roots.view(-1, 1).to(torch.cfloat)
         self.weights = self.weights.view(-1, 1).float()
+
+        if cuda:
+            self.k = self.k.cuda()
+            self.a = self.a.cuda()
+            self.b = self.b.cuda()
+            self.ga = self.ga.cuda()
+            self.gb = self.gb.cuda()
+            self.roots = self.gb.cuda()
+            self.weights = self.gb.cuda()
 
         if dropout_probs:
             assert len(dropout_probs) == len(layers) - 2
@@ -394,21 +406,15 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 # x = self.drops[i - 1](x)  # Drop-out
         return x
 
-    def train_(self, epochs: int, testfunctions: list, optimizer: torch.optim.Optimizer, cuda=False):
+    def train_(self, epochs: int, testfunctions: list, optimizer: torch.optim.Optimizer):
 
-        if cuda and not torch.cuda.is_available():
-            raise Exception('Cuda is not available.')
-        if cuda:
-            self.cuda()
-            optimizer.cuda()
         self.train()
-
         losses = []
         K = len(testfunctions)
         for epoch in range(epochs + 1):
             loss = 0
             for v_k in testfunctions:
-                loss += torch.abs(self.res(v_k, i=3)) ** 2 / K
+                loss += torch.abs(self.res(v_k, i=1)) ** 2 / K
             if self.penalty:
                 loss_ga = torch.abs(self.ga + self.deriv(1, self.a) + 1j * self(self.a)) ** 2
                 loss_gb = torch.abs(self.gb - self.deriv(1, self.b) + 1j * self(self.b)) ** 2
@@ -464,11 +470,11 @@ class VPINN_HelmholtzImpedance(nn.Module):
         else:
             f = func(x)
         if n >= 1:
-            grad = torch.ones(f.size(), dtype=f.dtype).to(f.device)
+            grad = torch.ones(f.size(), dtype=f.dtype, device=f.device)
             f_x = torch.autograd.grad(f, x, grad_outputs=grad, create_graph=True, allow_unused=False)
         if n >= 2:
-            grad = torch.ones(f_x.size(), dtype=f.dtype).to(f.device)
-            f_xx = torch.autograd.grad(f_x, x, grad_outputs=None, create_graph=True, allow_unused=False)
+            grad = torch.ones(f.size(), dtype=f.dtype, device=f.device)
+            f_xx = torch.autograd.grad(f_x, x, grad_outputs=grad, create_graph=True, allow_unused=False)
 
         if n == 0:
             return f
