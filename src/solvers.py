@@ -3,6 +3,7 @@ from typing import Callable, Union
 from quadrature_rules import gauss_lobatto_jacobi_quadrature1D, integrate_1d
 import torch
 from torch import nn
+import torch.nn.functional as F
 from numpy.polynomial import Polynomial
 from utils import changeType
 
@@ -330,11 +331,8 @@ def Exact_HelmholtzImpedance_const(f: float, k: float,\
 
 class VPINN_HelmholtzImpedance(nn.Module):
     def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
-        ga: complex, gb: complex, *, layers=[1, 10, 1], activation=nn.ReLU, dropout_probs=None,
-        penalty=None, N_quad=80, seed=None, cuda=False):
-
-        if cuda and not torch.cuda.is_available():
-            raise Exception('Cuda is not available.')
+        ga: complex, gb: complex, *, layers=[1, 10, 2], activation=F.relu, dropout_probs=None,
+        res_id: int =2, penalty=None, N_quad=80, seed=None, cuda=False):
 
         if seed:
             # Ensure reproducibility
@@ -342,49 +340,59 @@ class VPINN_HelmholtzImpedance(nn.Module):
             # torch.backends.cudnn.benchmark = True
             # torch.use_deterministic_algorithms(True)
 
+        if layers[-1] != 2: raise ValueError('Output must be 2-D (complex number).')
+
         super(VPINN_HelmholtzImpedance, self).__init__()
+        self.activation = activation
+        self.res_id = res_id
+
         self.f = f
-        self.k = changeType(k, 'Tensor')
-        self.a = changeType(a, 'Tensor').view(-1, 1).to(torch.cfloat)
-        self.b = changeType(b, 'Tensor').view(-1, 1).to(torch.cfloat)
-        self.ga = changeType(ga, 'Tensor').view(-1, 1).to(torch.cfloat)
-        self.gb = changeType(gb, 'Tensor').view(-1, 1).to(torch.cfloat)
-        self.penalty = penalty
+        self.k = changeType(k, 'Tensor').float()
+        self.penalty = changeType(penalty, 'Tensor').float()
+        self.a = changeType(a, 'Tensor').float().view(-1, 1).requires_grad_()
+        self.b = changeType(b, 'Tensor').float().view(-1, 1).requires_grad_()
+        self.ga_re = changeType(ga.real, 'Tensor').float().view(-1, 1)
+        self.ga_im = changeType(ga.imag, 'Tensor').float().view(-1, 1)
+        self.gb_re = changeType(gb.real, 'Tensor').float().view(-1, 1)
+        self.gb_im = changeType(gb.imag, 'Tensor').float().view(-1, 1)
 
         self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(N_quad, a, b)
-        self.roots = self.roots.view(-1, 1).to(torch.cfloat)
-        self.weights = self.weights.view(-1, 1).float()
+        self.roots = self.roots.float().view(-1, 1).requires_grad_()
+        self.weights = self.weights.float().view(-1, 1)
 
         if cuda:
+            if not torch.cuda.is_available(): raise Exception('Cuda is not available.')
             self.k = self.k.cuda()
+            self.penalty = self.penalty.cuda()
             self.a = self.a.cuda()
             self.b = self.b.cuda()
-            self.ga = self.ga.cuda()
-            self.gb = self.gb.cuda()
-            self.roots = self.gb.cuda()
-            self.weights = self.gb.cuda()
+            self.ga_re = self.ga_re.cuda()
+            self.ga_im = self.ga_im.cuda()
+            self.gb_re = self.gb_re.cuda()
+            self.gb_im = self.gb_im.cuda()
+            self.roots = self.roots.cuda()
+            self.weights = self.weights.cuda()
 
         if dropout_probs:
             assert len(dropout_probs) == len(layers) - 2
 
         self.length = len(layers)  # Number of layers
-        self.activation = lambda x: activation(x.real) + 1j * activation(x.imag)
         self.lins = nn.ModuleList()  # Linear blocks
         self.drops = nn.ModuleList()  # Dropout
         self.bns = nn.ModuleList()  # Batch-normalization
 
         # Hidden layers
         for input, output in zip(layers[0:-2], layers[1:-1]):
-            self.lins.append(nn.Linear(input, output, bias=True).to(torch.cfloat))
-            self.bns.append(nn.BatchNorm1d(output))  # FIXME: .to(torch.cfloat)) ?
+            self.lins.append(nn.Linear(input, output, bias=True))
+            self.bns.append(nn.BatchNorm1d(output))
 
         # Output layer
-        self.lins.append(nn.Linear(layers[-2], layers[-1], bias=True).to(torch.cfloat))
-        self.bns.append(nn.BatchNorm1d(output))  # FIXME: .to(torch.cfloat)) ?
+        self.lins.append(nn.Linear(layers[-2], layers[-1], bias=True))
+        self.bns.append(nn.BatchNorm1d(output))
 
         # Initialize weights
         for lin in self.lins:
-            nn.init.xavier_normal_(lin.weight, gain=1.)
+            nn.init.xavier_uniform_(lin.weight, gain=1.)
 
         # Assign drop-out probabilities
         if dropout_probs:
@@ -414,15 +422,24 @@ class VPINN_HelmholtzImpedance(nn.Module):
         for epoch in range(epochs + 1):
             loss = 0
             for v_k in testfunctions:
-                loss += torch.abs(self.res(v_k, i=1)) ** 2 / K
+                res_re, res_im = self.res(v_k, i=self.res_id)
+                loss += res_re.pow(2) / K + res_im.pow(2) / K
             if self.penalty:
-                loss_ga = torch.abs(self.ga + self.deriv(1, self.a) + 1j * self(self.a)) ** 2
-                loss_gb = torch.abs(self.gb - self.deriv(1, self.b) + 1j * self(self.b)) ** 2
-                loss += self.penalty / 2 * (loss_ga + loss_gb)
+                u_re = lambda x: self.deriv(0, x)[0]
+                u_x_re = lambda x: self.deriv(1, x)[0]
+                u_im = lambda x: self.deriv(0, x)[1]
+                u_x_im = lambda x: self.deriv(1, x)[1]
+
+                loss_ga_re = self.ga_re + u_x_re(self.a) - self.k * u_im(self.a)
+                loss_ga_im = self.ga_im + u_x_im(self.a) + self.k * u_re(self.a)
+                loss_gb_re = self.gb_re + u_x_re(self.b) - self.k * u_im(self.b)
+                loss_gb_im = self.gb_im + u_x_im(self.b) + self.k * u_re(self.b)
+                loss += self.penalty / 2 * (loss_ga_re.pow(2) + loss_ga_im.pow(2)
+                                        + loss_gb_re.pow(2) + loss_gb_im.pow(2))
 
             losses.append(loss.item())
             if epoch % 100 == 0:
-                print(f'Epoch {epoch} / {epochs}: loss = {loss.item()}')
+                print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.2e}')
 
             optimizer.zero_grad()
             loss.backward()
@@ -430,58 +447,76 @@ class VPINN_HelmholtzImpedance(nn.Module):
 
     def res(self, v_k: Polynomial, i: int):
 
-        u = lambda x: self.deriv(0, x)
-        u_x = lambda x: self.deriv(1, x)
-        u_xx = lambda x: self.deriv(2, x)
+        u_re = lambda x: self.deriv(0, x)[0]
+        u_x_re = lambda x: self.deriv(1, x)[0]
+        u_xx_re = lambda x: self.deriv(2, x)[0]
+        u_im = lambda x: self.deriv(0, x)[1]
+        u_x_im = lambda x: self.deriv(1, x)[1]
+        u_xx_im = lambda x: self.deriv(2, x)[1]
 
         if i == 1:
-            R_k = - self.intg(lambda x: u_xx(x) * v_k(x)) \
-                - self.k ** 2 * self.intg(lambda x: u(x) * v_k(x))
+            R_k_re = - self.intg(lambda x: u_xx_re(x) * v_k(x)) \
+                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x))
+
+            R_k_im = - self.intg(lambda x: u_xx_im(x) * v_k(x)) \
+                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x))
 
         elif i == 2:
-            # Consider replacing 0 with [u_x(x) * v_k(x)] at boundaries
-            # v_k has "compact support" so it should be zero at the boundaries?
-            R_k = + self.intg(lambda x: u_x(x) * v_k.deriv(1)(x)) \
-                - self.k ** 2 * self.intg(lambda x: u(x) * v_k(x))\
-                - 0
+            R_k_re = self.intg(lambda x: u_x_re(x) * v_k.deriv(1)(x)) \
+                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x))\
+                - (self.ga_re - self.k * u_im(self.a)) * v_k(self.a)\
+                - (self.gb_re - self.k * u_im(self.b)) * v_k(self.b)
+
+            R_k_im = self.intg(lambda x: u_x_im(x) * v_k.deriv(1)(x)) \
+                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x))\
+                - (self.ga_im + self.k * u_re(self.a)) * v_k(self.a)\
+                - (self.gb_im + self.k * u_re(self.b)) * v_k(self.b)
 
         elif i == 3:
-            # Consider replacing 0 with [u_x(x) * v_k(x)] at boundaries
-            # v_k has "compact support" so it should be zero at the boundaries?
-            R_k = - self.intg(lambda x: u(x) * v_k.deriv(2)(x)) \
-                - self.k ** 2 * self.intg(lambda x: u(x) * v_k(x))\
-                - 0\
-                + (u(self.b) * v_k.deriv(1)(self.b)) - (u(self.a) * v_k.deriv(1)(self.a))
+            R_k_re = - self.intg(lambda x: u_re(x) * v_k.deriv(2)(x)) \
+                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x))\
+                - (self.ga_re - self.k * u_im(self.a)) * v_k(self.a)\
+                - (self.gb_re - self.k * u_im(self.b)) * v_k(self.b)\
+                + (u_re(self.b) * v_k.deriv(1)(self.b)) - (u_re(self.a) * v_k.deriv(1)(self.a))
+
+            R_k_im = - self.intg(lambda x: u_im(x) * v_k.deriv(2)(x)) \
+                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x))\
+                - (self.ga_im + self.k * u_re(self.a)) * v_k(self.a)\
+                - (self.gb_im + self.k * u_re(self.b)) * v_k(self.b)\
+                + (u_im(self.b) * v_k.deriv(1)(self.b)) - (u_im(self.a) * v_k.deriv(1)(self.a))
 
         else:
             raise ValueError(f'{i} is not a valid input for VPINN_HelmholtzImpedance.loss().')
 
-        F_k = self.intg(lambda x: self.f(x) * v_k(x))
+        F_k_re = self.intg(lambda x: self.f(x) * v_k(x))
+        F_k_im = 0
 
-        return R_k - F_k
+        return R_k_re - F_k_re, R_k_im - F_k_im
 
-    def deriv(self, n: int, x: torch.tensor, *, func: Callable = None):
+    def deriv(self, n: int, x: torch.tensor):
         if n not in [0, 1, 2]:
             raise ValueError(f'n = {n} is not a valid derivative.')
 
-        x.requires_grad = True
-        if not func:
-            f = self(x)
-        else:
-            f = func(x)
+        f = self(x)
+        f_re = f[:, 0]
+        f_im = f[:, 1]
         if n >= 1:
-            grad = torch.ones(f.size(), dtype=f.dtype, device=f.device)
-            f_x = torch.autograd.grad(f, x, grad_outputs=grad, create_graph=True, allow_unused=False)
+            grad = torch.ones(f_re.size(), dtype=f.dtype, device=f.device)
+            f_x_re = torch.autograd.grad(f_re, x, grad_outputs=grad, create_graph=True, allow_unused=False)[0]
+            grad = torch.ones(f_im.size(), dtype=f.dtype, device=f.device)
+            f_x_im = torch.autograd.grad(f_im, x, grad_outputs=grad, create_graph=True, allow_unused=False)[0]
         if n >= 2:
-            grad = torch.ones(f.size(), dtype=f.dtype, device=f.device)
-            f_xx = torch.autograd.grad(f_x, x, grad_outputs=grad, create_graph=True, allow_unused=False)
+            grad = torch.ones(f_x_re.size(), dtype=f.dtype, device=f.device)
+            f_xx_re = torch.autograd.grad(f_x_re, x, grad_outputs=grad, create_graph=True, allow_unused=False)[0]
+            grad = torch.ones(f_x_im.size(), dtype=f.dtype, device=f.device)
+            f_xx_im = torch.autograd.grad(f_x_im, x, grad_outputs=grad, create_graph=True, allow_unused=False)[0]
 
         if n == 0:
-            return f
+            return f_re, f_im
         elif n == 1:
-            return f_x[0]
+            return f_x_re, f_x_im
         elif n == 2:
-            return f_xx[0]
+            return f_xx_re, f_xx_im
 
     def intg(self, func: Callable) -> complex:
         """Integrator of the class.
