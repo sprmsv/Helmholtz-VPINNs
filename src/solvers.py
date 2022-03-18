@@ -5,7 +5,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from numpy.polynomial import Polynomial
-from utils import changeType
+from utils import changeType, Finite_Elements
 
 class FEM_HelmholtzImpedance():
     """ Finite Element Method solver class for solving the 1D Helmholtz Impendace problem:
@@ -32,6 +32,7 @@ class FEM_HelmholtzImpedance():
             N_quad (int, optional): Number of quadrature points for int(f * phi).
         """
 
+        # Store equation parameters
         self.source = source
         self.f = f
         self.k = k
@@ -39,6 +40,10 @@ class FEM_HelmholtzImpedance():
         self.ga, self.gb = ga, gb
         self.N = N
         self.h = (b - a) / N
+
+        # Get basis functions
+        self.FE = Finite_Elements(N, a, b, dtype=np.ndarray)
+        self.bases = self.FE()
         if not N_quad:
             if self.N * 10 > 1000:
                 self.N_quad = 1000
@@ -48,14 +53,17 @@ class FEM_HelmholtzImpedance():
         else:
             self.N_quad = N_quad
 
+        # Initialize coefficients
         self.x = np.linspace(a, b, N + 1)
         self.A = np.zeros((N + 1, N + 1), dtype=complex)
         self.d = np.zeros(N + 1, dtype=complex)
 
+        # Initialize solutions
         self.c = None
         self.sol = None
         self.der = None
 
+        # Get the quadrature points
         self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(self.N_quad, a, b)
         self.roots, self.weights = self.roots.numpy(), self.weights.numpy()
 
@@ -73,52 +81,11 @@ class FEM_HelmholtzImpedance():
 
         self.c = np.linalg.solve(self.A, self.d)
         self.sol = lambda x: np.sum(np.array(
-            [[self.c[i] * self.phi(i)(x)] for i in range(self.N + 1)]
+            [[self.c[i] * self.bases[i](x)] for i in range(self.N + 1)]
             ), axis=0)
         self.der = lambda x: np.sum(np.array(
-            [[self.c[i] * self.phi_x(i)(x)] for i in range(self.N + 1)]
+            [[self.c[i] * self.bases[i].deriv(1)(x)] for i in range(self.N + 1)]
             ), axis=0)
-
-    def phi(self, i: int) -> Callable:
-        """Returns the basis functions of the V_N subspace
-
-        Args:
-            i (int): Index of the basis function.
-
-        Returns:
-            Callable: The basis function.
-        """
-
-        xi = self.x[i]
-
-        x_before = self.x[i - 1] if i != 0 else xi
-        x_after = self.x[i + 1] if i != self.N else xi
-        step = lambda x: np.heaviside(x - x_before, 1) - np.heaviside(x - x_after, 0)
-
-        return lambda x: step(x) * (1 - np.abs((x - xi)) / self.h)
-
-    def phi_x(self, i: int) -> Callable:
-        """Returns the derivative of the basis function.
-
-        Args:
-            i (int): Index of the basis function.
-
-        Returns:
-            Callable: The derivative of the basis function
-        """
-
-        xi = self.x[i]
-
-        x_before = self.x[i - 1] if i != 0 else xi
-        x_after = self.x[i + 1] if i != self.N else xi
-        step = lambda x: np.heaviside(x - x_before, 1) - np.heaviside(x - x_after, 0)
-
-        if i == 0:
-            return lambda x: step(x) * -(1 / self.h) * (+1)
-        elif i == self.N:
-            return lambda x: step(x) * -(1 / self.h) * (-1)
-        else:
-            return lambda x: step(x) * -(1 / self.h) * np.sign(x - xi)
 
     def lhs(self, i, j) -> complex:
         """Computes the left-hand-side of the system of the equations:
@@ -133,9 +100,9 @@ class FEM_HelmholtzImpedance():
             complex: The left-hand-side of the equation.
         """
 
-        phi_i = self.phi(i)
-        phi_j = self.phi(j)
-        return self.intphi_x(i, j) - self.k ** 2 * self.intphi(i, j)\
+        phi_i = self.bases[i]
+        phi_j = self.bases[j]
+        return self.FE.intphi_x(i, j) - self.k ** 2 * self.FE.intphi(i, j)\
             - 1j * self.k * (phi_i(self.a) * phi_j(self.a) + phi_i(self.b) * phi_j(self.b))
 
     def rhs(self, j: int) -> complex:
@@ -149,7 +116,7 @@ class FEM_HelmholtzImpedance():
             complex: The right-hand-side of the equation.
         """
 
-        phi_j = self.phi(j)
+        phi_j = self.bases[j]
 
         if self.source == 'const':
             intfv = self.f * self.h
@@ -163,47 +130,6 @@ class FEM_HelmholtzImpedance():
 
         return intfv + self.ga * phi_j(self.a) + self.gb * phi_j(self.b)
 
-    def intphi(self, i: int, j: int) -> float:
-        """Calculates int(phi_i * phi_j) over the domain, 0 <= i, j <= N.
-
-        Args:
-            i (int): Index of the basis function.
-            j (int): Index of the test function.
-
-        Returns:
-            float: The value of the integral.
-        """
-
-        if i == j:
-            if i == 0 or i == self.N:
-                return self.h / 3
-            else:
-                return self.h * 2 / 3
-        elif abs(i - j) == 1:
-            return self.h / 6
-        else:
-            return 0
-
-    def intphi_x(self, i: int, j: int) -> float:
-        """Calculates int(phi_x_i * phi_x_j) over the domain, 0 <= i, j <= N.
-
-        Args:
-            i (int): Index of the basis function.
-            j (int): Index of the test function.
-
-        Returns:
-            float: The value of the integral.
-        """
-
-        if i == j:
-            if i == 0 or i == self.N:
-                return 1 / self.h
-            else:
-                return 2 / self.h
-        elif abs(i - j) == 1:
-            return -1 / self.h
-        else:
-            return 0
 
     def intg(self, f: Callable) -> complex:
         """Integrator of the class.
