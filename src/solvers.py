@@ -245,7 +245,6 @@ class FEM_HelmholtzImpedance():
 
         return err_u + err_u_x, err_u, err_u_x
 
-
     def __call__(self, x: float) -> complex:
         """Returns the solution of the equation.
 
@@ -334,21 +333,26 @@ class VPINN_HelmholtzImpedance(nn.Module):
         ga: complex, gb: complex, *, layers=[1, 10, 2], activation=F.relu, dropout_probs=None,
         res_id: int =2, penalty=None, N_quad=80, seed=None, cuda=False):
 
+        # Ensure reproducibility
         if seed:
-            # Ensure reproducibility
             torch.manual_seed(seed)
             # torch.backends.cudnn.benchmark = True
             # torch.use_deterministic_algorithms(True)
 
-        if layers[-1] != 2: raise ValueError('Output must be 2-D (complex number).')
+        # Check the validty of the inputs
+        if dropout_probs:
+            assert len(dropout_probs) == len(layers) - 2
+        assert layers[-1] == 2
 
+        # Initialize
         super(VPINN_HelmholtzImpedance, self).__init__()
         self.activation = activation
         self.res_id = res_id
 
+        # Store equation parameters
         self.f = f
         self.k = changeType(k, 'Tensor').float()
-        self.penalty = changeType(penalty, 'Tensor').float()
+        self.penalty = changeType(penalty, 'Tensor').float() if penalty else None
         self.a = changeType(a, 'Tensor').float().view(-1, 1).requires_grad_()
         self.b = changeType(b, 'Tensor').float().view(-1, 1).requires_grad_()
         self.ga_re = changeType(ga.real, 'Tensor').float().view(-1, 1)
@@ -356,10 +360,12 @@ class VPINN_HelmholtzImpedance(nn.Module):
         self.gb_re = changeType(gb.real, 'Tensor').float().view(-1, 1)
         self.gb_im = changeType(gb.imag, 'Tensor').float().view(-1, 1)
 
+        # Store quadrature points
         self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(N_quad, a, b)
         self.roots = self.roots.float().view(-1, 1).requires_grad_()
         self.weights = self.weights.float().view(-1, 1)
 
+        # Move variables to CUDA
         if cuda:
             if not torch.cuda.is_available(): raise Exception('Cuda is not available.')
             self.k = self.k.cuda()
@@ -373,20 +379,18 @@ class VPINN_HelmholtzImpedance(nn.Module):
             self.roots = self.roots.cuda()
             self.weights = self.weights.cuda()
 
-        if dropout_probs:
-            assert len(dropout_probs) == len(layers) - 2
-
+        # Define modules
         self.length = len(layers)  # Number of layers
         self.lins = nn.ModuleList()  # Linear blocks
         self.drops = nn.ModuleList()  # Dropout
         self.bns = nn.ModuleList()  # Batch-normalization
 
-        # Hidden layers
+        # Define the hidden layers
         for input, output in zip(layers[0:-2], layers[1:-1]):
             self.lins.append(nn.Linear(input, output, bias=True))
             self.bns.append(nn.BatchNorm1d(output))
 
-        # Output layer
+        # Define the output layer
         self.lins.append(nn.Linear(layers[-2], layers[-1], bias=True))
         self.bns.append(nn.BatchNorm1d(output))
 
@@ -399,7 +403,6 @@ class VPINN_HelmholtzImpedance(nn.Module):
             for p in dropout_probs:
                 self.drops.append(nn.Dropout(p=p))
 
-    # Forward function without batch-normalization and drop-out
     def forward(self, x):
         for i, f, bn in zip(range(self.length), self.lins, self.bns):
             if i == len(self.lins) - 1:
@@ -414,7 +417,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 # x = self.drops[i - 1](x)  # Drop-out
         return x
 
-    def train_(self, epochs: int, testfunctions: list, optimizer: torch.optim.Optimizer):
+    def train_(self, testfunctions: list, epochs: int, optimizer: torch.optim.Optimizer):
 
         self.train()
         losses = []
@@ -489,7 +492,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
             raise ValueError(f'{i} is not a valid input for VPINN_HelmholtzImpedance.loss().')
 
         F_k_re = self.intg(lambda x: self.f(x) * v_k(x))
-        F_k_im = 0
+        F_k_im = 0  # In case of complex source function
 
         return R_k_re - F_k_re, R_k_im - F_k_im
 
