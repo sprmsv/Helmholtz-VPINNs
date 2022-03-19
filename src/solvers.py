@@ -141,8 +141,7 @@ class FEM_HelmholtzImpedance():
             complex: Integral over the domain (a, b) with N_quad quadrature points.
         """
 
-        y = integrate_1d(f, self.a, self.b, self.weights, self.roots).item()
-        return y
+        return integrate_1d(f, self.a, self.b, self.weights, self.roots).item()
 
     def H1_error(self, u: Callable, u_x: Callable) -> float:
         """Computes the H1 error:
@@ -309,20 +308,26 @@ class VPINN_HelmholtzImpedance(nn.Module):
         self.length = len(layers)  # Number of layers
         self.lins = nn.ModuleList()  # Linear blocks
         self.drops = nn.ModuleList()  # Dropout
-        self.bns = nn.ModuleList()  # Batch-normalization
+        # self.bns = nn.ModuleList()  # Batch-normalization
 
         # Define the hidden layers
         for input, output in zip(layers[0:-2], layers[1:-1]):
             self.lins.append(nn.Linear(input, output, bias=True))
-            self.bns.append(nn.BatchNorm1d(output))
+            # self.bns.append(nn.BatchNorm1d(output))
 
         # Define the output layer
         self.lins.append(nn.Linear(layers[-2], layers[-1], bias=True))
-        self.bns.append(nn.BatchNorm1d(output))
+        # self.bns.append(nn.BatchNorm1d(output))
 
-        # Initialize weights
-        for lin in self.lins:
-            nn.init.xavier_uniform_(lin.weight, gain=1.)
+        # Initialize weights and biases
+        for lin in self.lins[:-1]:
+            # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
+            nn.init.ones_(lin.weight)
+            nn.init.uniform_(lin.bias, a=a, b=b)
+        # nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
+        nn.init.xavier_normal_(self.lins[-1].weight, gain=1)
+        # nn.init.uniform_(self.lins[-1].bias, a=a, b=b)
+        nn.init.zeros_(self.lins[-1].bias)
 
         # Assign drop-out probabilities
         if dropout_probs:
@@ -330,7 +335,8 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 self.drops.append(nn.Dropout(p=p))
 
     def forward(self, x):
-        for i, f, bn in zip(range(self.length), self.lins, self.bns):
+        # for i, f, bn in zip(range(self.length), self.lins, self.bns):
+        for i, f in zip(range(self.length), self.lins):
             if i == len(self.lins) - 1:
             # Last layer
                 x = f(x)
@@ -343,10 +349,12 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 # x = self.drops[i - 1](x)  # Drop-out
         return x
 
-    def train_(self, testfunctions: list, epochs: int, optimizer: torch.optim.Optimizer):
+    def train_(self, testfunctions: list, epochs: int, optimizer, scheduler=None,
+    exact: tuple =None):
 
         self.train()
         losses = []
+        errors = []
         K = len(testfunctions)
         for epoch in range(epochs + 1):
             loss = 0
@@ -367,12 +375,21 @@ class VPINN_HelmholtzImpedance(nn.Module):
                                         + loss_gb_re.pow(2) + loss_gb_im.pow(2))
 
             losses.append(loss.item())
+            if exact:
+                error = self.H1_error(exact[0], exact[1])
+                errors.append(error)
             if epoch % 100 == 0:
-                print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.2e}')
+                if exact:
+                    print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error:.3e}')
+                else:
+                    print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}')
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            scheduler.step(loss)
+
+        return losses, errors
 
     def res(self, v_k: Polynomial, i: int):
 
@@ -447,6 +464,37 @@ class VPINN_HelmholtzImpedance(nn.Module):
         elif n == 2:
             return f_xx_re, f_xx_im
 
+    def H1_error(self, u: Callable, u_x: Callable) -> float:
+        """Computes the H1 error:
+        .. math::
+            \\sqrt{||u - u^N||_{L^2}^2 + ||\\frac{du}{dx} - \\frac{du^N}{dx}||_{L^2}^2}
+
+        Args:
+            u (Callable): Exact solution
+            u_x (Callable): Exact derivative of the solution
+
+        Returns:
+            float: H1 error of the solution
+            float: L2 norm of the solution
+            float: L2 norm of the derivative of the solution
+        """
+        def sol(x):
+            sol_ = u(x.detach().view(-1).numpy())
+            return torch.Tensor([sol_.real, sol_.imag]).T
+        def der(x):
+            der_ = u_x(x.detach().view(-1).numpy())
+            return torch.Tensor([der_.real, der_.imag]).T
+
+        u2 = lambda x: (sol(x) - self(x)).pow(2).sum(axis=1)
+        ux2_re = lambda x: (der(x)[:, 0] - self.deriv(1, x)[0].view(-1)).pow(2)
+        ux2_im = lambda x: (der(x)[:, 1] - self.deriv(1, x)[1].view(-1)).pow(2)
+        ux2 = lambda x: ux2_re(x) + ux2_im(x)
+
+        err_u = torch.sqrt(self.intg(u2))
+        err_u_x = torch.sqrt(self.intg(ux2))
+
+        return err_u + err_u_x, err_u, err_u_x
+
     def intg(self, func: Callable) -> complex:
         """Integrator of the class.
 
@@ -457,8 +505,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
             complex: Integral over the domain (a, b) with N_quad quadrature points.
         """
 
-        integral = (self.b - self.a) * torch.sum(func(self.roots) * self.weights) / 2
-        return integral
+        return (self.b - self.a) * torch.sum(func(self.roots) * self.weights) / 2
 
     def __len__(self):
         return self.length - 2  # Number of hidden layers / depth
