@@ -239,6 +239,13 @@ class Exact_HelmholtzImpedance():
 def Exact_HelmholtzImpedance_const(f: float, k: float,\
     a: float, b: float, ga: complex, gb: complex):
 
+    """This solution is only for constant source function f(x), and a = -1, b = +1
+
+    Returns:
+        Callable: Exact solution
+        Callable: Exact Derivative
+    """
+
     uG = lambda x: f / (2 * k ** 2) * np.exp(1j * k) * np.cos(k * x)
     uG_x = lambda x: -f / (2 * k) * np.exp(1j * k) * np.sin(k * x)
     w = lambda x: -np.exp(1j * k) / (2j * k)\
@@ -356,17 +363,19 @@ class VPINN_HelmholtzImpedance(nn.Module):
         losses = []
         errors = []
         K = len(testfunctions)
+
         for epoch in range(epochs + 1):
             loss = 0
+
             for v_k in testfunctions:
                 res_re, res_im = self.res(v_k, i=self.res_id)
                 loss += res_re.pow(2) / K + res_im.pow(2) / K
+
             if self.penalty:
                 u_re = lambda x: self.deriv(0, x)[0]
                 u_x_re = lambda x: self.deriv(1, x)[0]
                 u_im = lambda x: self.deriv(0, x)[1]
                 u_x_im = lambda x: self.deriv(1, x)[1]
-
                 loss_ga_re = self.ga_re + u_x_re(self.a) - self.k * u_im(self.a)
                 loss_ga_im = self.ga_im + u_x_im(self.a) + self.k * u_re(self.a)
                 loss_gb_re = self.gb_re + u_x_re(self.b) - self.k * u_im(self.b)
@@ -378,29 +387,29 @@ class VPINN_HelmholtzImpedance(nn.Module):
             if exact:
                 error = self.H1_error(exact[0], exact[1])
                 errors.append(error)
-            if epoch % 100 == 0:
+            if epoch % 50 == 0:
                 if exact:
-                    print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error:.3e}')
+                    print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}')
                 else:
                     print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}')
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            # scheduler.step(error[0] if exact else loss)
             scheduler.step(loss)
 
         return losses, errors
 
-    def res(self, v_k: Polynomial, i: int):
+    def res(self, v_k: Callable, i: int):
 
         u_re = lambda x: self.deriv(0, x)[0]
-        u_x_re = lambda x: self.deriv(1, x)[0]
-        u_xx_re = lambda x: self.deriv(2, x)[0]
         u_im = lambda x: self.deriv(0, x)[1]
-        u_x_im = lambda x: self.deriv(1, x)[1]
-        u_xx_im = lambda x: self.deriv(2, x)[1]
 
         if i == 1:
+            u_xx_re = lambda x: self.deriv(2, x)[0]
+            u_xx_im = lambda x: self.deriv(2, x)[1]
+
             R_k_re = - self.intg(lambda x: u_xx_re(x) * v_k(x)) \
                 - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x))
 
@@ -408,6 +417,9 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x))
 
         elif i == 2:
+            u_x_re = lambda x: self.deriv(1, x)[0]
+            u_x_im = lambda x: self.deriv(1, x)[1]
+
             R_k_re = self.intg(lambda x: u_x_re(x) * v_k.deriv(1)(x)) \
                 - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x))\
                 - (self.ga_re - self.k * u_im(self.a)) * v_k(self.a)\
