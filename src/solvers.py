@@ -246,19 +246,24 @@ def Exact_HelmholtzImpedance_const(f: float, k: float,\
         Callable: Exact Derivative
     """
 
-    uG = lambda x: f / (2 * k ** 2) * np.exp(1j * k) * np.cos(k * x)
-    uG_x = lambda x: -f / (2 * k) * np.exp(1j * k) * np.sin(k * x)
+    uG = lambda x: - f / (k ** 2) * (1 - np.exp(1j * k) * np.cos(k * x))
+    uG_x = lambda x: - f / (k) * (np.exp(1j * k) * np.sin(k * x))
+    uG_xx = lambda x: - f * (np.exp(1j * k) * np.cos(k * x))
     w = lambda x: -np.exp(1j * k) / (2j * k)\
             * (ga * np.exp(1j * k * x)
                 + gb * np.exp(-1j * k * x))
     w_x = lambda x: -np.exp(1j * k) / 2\
             * (ga * np.exp(1j * k * x)
                 - gb * np.exp(-1j * k * x))
+    w_xx = lambda x: -np.exp(1j * k) / 2 * (1j * k)\
+            * (ga * np.exp(1j * k * x)
+                + gb * np.exp(-1j * k * x))
 
     u = lambda x: uG(x) + w(x)
     u_x = lambda x: uG_x(x) + w_x(x)
+    u_xx = lambda x: uG_xx(x) + w_xx(x)
 
-    return u, u_x
+    return u, u_x, u_xx
 
 class VPINN_HelmholtzImpedance(nn.Module):
     def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
@@ -329,12 +334,12 @@ class VPINN_HelmholtzImpedance(nn.Module):
         # Initialize weights and biases
         for lin in self.lins[:-1]:
             # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
+            # nn.init.normal_(lin.weight, mean=1., std=.5)
             nn.init.ones_(lin.weight)
             nn.init.uniform_(lin.bias, a=a, b=b)
-        # nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
-        nn.init.xavier_normal_(self.lins[-1].weight, gain=1)
-        # nn.init.uniform_(self.lins[-1].bias, a=a, b=b)
-        nn.init.zeros_(self.lins[-1].bias)
+            # lin.bias = nn.Parameter(-1 * torch.linspace(a - 1e-06, b, layers[1] + 1).float()[:-1])
+        nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
+        nn.init.ones_(self.lins[-1].bias)
 
         # Assign drop-out probabilities
         if dropout_probs:
@@ -470,7 +475,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
             f_xx_im = torch.autograd.grad(f_x_im, x, grad_outputs=grad, create_graph=True, allow_unused=False)[0]
 
         if n == 0:
-            return f_re, f_im
+            return f_re.view(-1, 1), f_im.view(-1, 1)
         elif n == 1:
             return f_x_re, f_x_im
         elif n == 2:
