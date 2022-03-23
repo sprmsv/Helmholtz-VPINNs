@@ -1,11 +1,14 @@
-import numpy as np
 from typing import Callable, Union
-from quadrature_rules import gauss_lobatto_jacobi_quadrature1D, integrate_1d
+
+import numpy as np
 import torch
-from torch import nn
 import torch.nn.functional as F
 from numpy.polynomial import Polynomial
-from utils import changeType, Finite_Elements
+from torch import nn
+
+from quadrature_rules import gauss_lobatto_jacobi_quadrature1D, integrate_1d
+from utils import Finite_Elements, changeType
+
 
 class FEM_HelmholtzImpedance():
     """ Finite Element Method solver class for solving the 1D Helmholtz Impendace problem:
@@ -331,20 +334,20 @@ class VPINN_HelmholtzImpedance(nn.Module):
         self.lins.append(nn.Linear(layers[-2], layers[-1], bias=True))
         # self.bns.append(nn.BatchNorm1d(output))
 
-        # Initialize weights and biases
-        for lin in self.lins[:-1]:
-            # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
-            # nn.init.normal_(lin.weight, mean=1., std=.5)
-            nn.init.ones_(lin.weight)
-            nn.init.uniform_(lin.bias, a=a, b=b)
-            # lin.bias = nn.Parameter(-1 * torch.linspace(a - 1e-06, b, layers[1] + 1).float()[:-1])
-        nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
-        nn.init.ones_(self.lins[-1].bias)
-
         # Assign drop-out probabilities
         if dropout_probs:
             for p in dropout_probs:
                 self.drops.append(nn.Dropout(p=p))
+
+        # Initialize weights and biases
+        for lin in self.lins[:-1]:
+            nn.init.ones_(lin.weight)
+            # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
+            # nn.init.normal_(lin.weight, mean=1., std=.5)
+            lin.bias = nn.Parameter(-1 * torch.linspace(a - 1e-06, b, layers[1] + 1).float()[:-1])
+            # nn.init.uniform_(lin.bias, a=a, b=b)
+        nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
+        nn.init.zeros_(self.lins[-1].bias)
 
     def forward(self, x):
         # for i, f, bn in zip(range(self.length), self.lins, self.bns):
@@ -373,20 +376,25 @@ class VPINN_HelmholtzImpedance(nn.Module):
             loss = 0
 
             for v_k in testfunctions:
-                res_re, res_im = self.res(v_k, i=self.res_id)
-                loss += res_re.pow(2) / K + res_im.pow(2) / K
+                loss += self.loss_v(v_k, i=self.res_id) / K
 
             if self.penalty:
                 u_re = lambda x: self.deriv(0, x)[0]
-                u_x_re = lambda x: self.deriv(1, x)[0]
                 u_im = lambda x: self.deriv(0, x)[1]
+                u_x_re = lambda x: self.deriv(1, x)[0]
                 u_x_im = lambda x: self.deriv(1, x)[1]
+
+                # pen = self.penalty * (1 / u_re(self.roots).norm().pow(4) + 1 / u_im(self.roots).norm().pow(4))
+                # pen_x = self.penalty * (1 / u_x_re(self.roots).norm().pow(4) + 1 / u_x_im(self.roots).norm().pow(4))
+                # loss += pen_x
+
                 loss_ga_re = self.ga_re + u_x_re(self.a) - self.k * u_im(self.a)
                 loss_ga_im = self.ga_im + u_x_im(self.a) + self.k * u_re(self.a)
                 loss_gb_re = self.gb_re + u_x_re(self.b) - self.k * u_im(self.b)
                 loss_gb_im = self.gb_im + u_x_im(self.b) + self.k * u_re(self.b)
-                loss += self.penalty / 2 * (loss_ga_re.pow(2) + loss_ga_im.pow(2)
+                pen = self.penalty / 2 * (loss_ga_re.pow(2) + loss_ga_im.pow(2)
                                         + loss_gb_re.pow(2) + loss_gb_im.pow(2))
+                loss += pen
 
             losses.append(loss.item())
             if exact:
@@ -394,6 +402,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 errors.append(error)
             if epoch % 50 == 0:
                 if exact:
+                    # print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}, pen ={pen.item():.3e}')
                     print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}')
                 else:
                     print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}')
@@ -402,11 +411,11 @@ class VPINN_HelmholtzImpedance(nn.Module):
             loss.backward()
             optimizer.step()
             # scheduler.step(error[0] if exact else loss)
-            scheduler.step(loss)
+            scheduler.step()
 
         return losses, errors
 
-    def res(self, v_k: Callable, i: int):
+    def loss_v(self, v_k: Callable, i: int):
 
         u_re = lambda x: self.deriv(0, x)[0]
         u_im = lambda x: self.deriv(0, x)[1]
@@ -454,7 +463,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
         F_k_re = self.intg(lambda x: self.f(x) * v_k(x))
         F_k_im = 0  # In case of complex source function
 
-        return R_k_re - F_k_re, R_k_im - F_k_im
+        return (R_k_re - F_k_re).pow(2) + (R_k_im - F_k_im).pow(2)
 
     def deriv(self, n: int, x: torch.tensor):
         if n not in [0, 1, 2]:
