@@ -189,86 +189,113 @@ class FEM_HelmholtzImpedance():
         return self.sol(x), self.der(x)
 
 class Exact_HelmholtzImpedance():
-# FIXME: Faces an error in integrate_1D()
-# TODO: Add calculation of u_x
-    def __init__(self, f: Union[Callable, float], f_x: Callable,\
-        k: float, a: float, b: float, ga: complex, gb: complex):
 
-        self.f = f
-        self.f_x = f_x
+    # FIXME: General case is not right! uG_xx has a f(0) bias!
+    def __init__(self, f: tuple, k: float,\
+        a: float, b: float, ga: complex, gb: complex,\
+        source: str =None):
+
+        self.source = source
+        self.f = f[0]
+        self.f_x = f[1]
         self.k = k
         self.a, self.b = a, b
         self.ga, self.gb = ga, gb
 
-        self.quad_N = 100
-        self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, a, b)
-        self.roots, self.weights = self.roots.numpy(), self.weights.numpy()
+        self.quad_N = 500
+        roots, weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, a, b)
+        roots, weights = roots.numpy(), weights.numpy()
+        self.quadpoints = (roots, weights)
+
+    def verify(self):
+        u, u_x, u_xx = self()
+        assert np.allclose(- u_x(self.a) - 1j * self.k * u(self.a), self.ga)
+        assert np.allclose(+ u_x(self.b) - 1j * self.k * u(self.b), self.gb)
+        for x in np.linspace(self.a, self.b, 100):
+            assert np.allclose(- u_xx(x) - self.k ** 2 * u(x),
+                self.f if self.source == 'const' else self.f(x))
 
     def w(self, x) -> Callable:
         return -np.exp(1j * self.k) / (2j * self.k)\
             * (self.ga * np.exp(1j * self.k * x)
                 + self.gb * np.exp(-1j * self.k * x))
 
+    def w_x(self, x) -> Callable:
+        return -np.exp(1j * self.k) / 2\
+            * (self.ga * np.exp(1j * self.k * x)
+                - self.gb * np.exp(-1j * self.k * x))
+
+    def w_xx(self, x) -> Callable:
+        return -np.exp(1j * self.k) / 2 * (1j * self.k)\
+            * (self.ga * np.exp(1j * self.k * x)
+                + self.gb * np.exp(-1j * self.k * x))
+
     def uG(self, x) -> Callable:
-        Hf = lambda s: self.H(x, s) * self.f(s)
-        Hf_x = lambda s: self.H(x, s) * self.f_x(s)
-        return Hf(self.b) - Hf(self.a) - self.intg(Hf_x, self.a, self.b)
+        if self.source == 'const':
+            uG = - self.f / (self.k ** 2) * (1 - np.exp(1j * self.k) * np.cos(self.k * x))
+        else:
+            Hf = lambda s: self.H(x, s) * self.f(s)
+            Hf_x = lambda s: self.H(x, s) * self.f_x(s)
+            uG = - (Hf(self.b) - Hf(self.a)) - self.intg(Hf_x)
+        return uG
 
-    def H(self, x, s):
-        G = lambda t: np.exp(1j * self.k * np.abs(x - t)) / (2j * self.k)
-        return self.intg(G, self.a, s)
+    def uG_x(self, x) -> Callable:
+        if self.source == 'const':
+            uG_x = - self.f / (self.k) * (np.exp(1j * self.k) * np.sin(self.k * x))
+        else:
+            Hf = lambda s: self.H(x, s, der=1) * self.f(s)
+            Hf_x = lambda s: self.H(x, s, der=1) * self.f_x(s)
+            uG_x = - (Hf(self.b) - Hf(self.a)) - self.intg(Hf_x)
+        return uG_x
 
-    def intg(self, func: Callable, a: float =None, b: float=None) -> complex:
+    def uG_xx(self, x) -> Callable:
+        if self.source == 'const':
+            uG_xx = - self.f * (np.exp(1j * self.k) * np.cos(self.k * x))
+        else:
+            Hf = lambda s: self.H(x, s, der=2) * self.f(s)
+            Hf_x = lambda s: self.H(x, s, der=2) * self.f_x(s)
+            uG_xx = - (Hf(self.b) - Hf(self.a)) - self.intg(Hf_x)
+        return uG_xx
+
+    def H(self, x, s, der=0):
+        if np.allclose(self.a, s):
+            return 0
+
+        if der == 0:
+            G = lambda t: .5 / (1j * self.k) * np.exp(1j * self.k * np.abs(x - t))
+        elif der == 1:
+            G = lambda t: .5 * np.sign(x - t) * np.exp(1j * self.k * np.abs(x - t))
+        elif der == 2:
+            G = lambda t: .5 * (1j * self.k) * np.exp(1j * self.k * np.abs(x - t))
+
+        roots, weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, self.a, s)
+        roots, weights = roots.numpy(), weights.numpy()
+        return self.intg(G, (roots, weights))
+
+    def intg(self, func: Callable, quadpoints: tuple =None) -> complex:
         """Integrator of the class.
 
         Args:
-            func (Callable): Function to be integrated.
-            a (float): Left boundary.
-            b (float): Right boundary.
+            f (Callable): Function to be integrated.
+            quadpoints (tuple): Quadrature points (roots, weights). Defaults to None.
 
         Returns:
-            complex: Integral over the domain (a, b) with quad_N quadrature points.
+            complex: Integral over the domain (a, b) with N_quad quadrature points.
         """
 
-        roots, weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, a, b)
-        roots, weights = roots.numpy(), weights.numpy()
+        if not quadpoints: quadpoints = self.quadpoints
+        roots, weights = quadpoints
 
-        return integrate_1d(func, a, b, weights, roots).item()
+        return (roots[-1] - roots[0]) * np.sum(func(roots) * weights) / 2
 
     def __call__(self):
         u = lambda x: self.uG(x) + self.w(x)
-        return u
-
-def Exact_HelmholtzImpedance_const(f: float, k: float,\
-    a: float, b: float, ga: complex, gb: complex):
-
-    """This solution is only for constant source function f(x), and a = -1, b = +1
-
-    Returns:
-        Callable: Exact solution
-        Callable: Exact Derivative
-    """
-
-    uG = lambda x: - f / (k ** 2) * (1 - np.exp(1j * k) * np.cos(k * x))
-    uG_x = lambda x: - f / (k) * (np.exp(1j * k) * np.sin(k * x))
-    uG_xx = lambda x: - f * (np.exp(1j * k) * np.cos(k * x))
-    w = lambda x: -np.exp(1j * k) / (2j * k)\
-            * (ga * np.exp(1j * k * x)
-                + gb * np.exp(-1j * k * x))
-    w_x = lambda x: -np.exp(1j * k) / 2\
-            * (ga * np.exp(1j * k * x)
-                - gb * np.exp(-1j * k * x))
-    w_xx = lambda x: -np.exp(1j * k) / 2 * (1j * k)\
-            * (ga * np.exp(1j * k * x)
-                + gb * np.exp(-1j * k * x))
-
-    u = lambda x: uG(x) + w(x)
-    u_x = lambda x: uG_x(x) + w_x(x)
-    u_xx = lambda x: uG_xx(x) + w_xx(x)
-
-    return u, u_x, u_xx
+        u_x = lambda x: self.uG_x(x) + self.w_x(x)
+        u_xx = lambda x: self.uG_xx(x) + self.w_xx(x)
+        return u, u_x, u_xx
 
 class VPINN_HelmholtzImpedance(nn.Module):
+
     def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
         ga: complex, gb: complex, *, layers=[1, 10, 2], activation=F.relu, dropout_probs=None,
         res_id: int =2, penalty=None, quad_N=80, seed=None, cuda=False):
@@ -347,7 +374,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
             nn.init.ones_(lin.weight)
             # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
             # nn.init.normal_(lin.weight, mean=1., std=.5)
-            lin.bias = nn.Parameter(-1 * torch.linspace(a - 1e-01, b, layers[1] + 1).float()[:-1])
+            lin.bias = nn.Parameter(-1 * torch.linspace(a - .05 * (b - a), b, layers[1] + 1).float()[:-1])
             # nn.init.uniform_(lin.bias, a=a, b=b)
         nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
         nn.init.zeros_(self.lins[-1].bias)
