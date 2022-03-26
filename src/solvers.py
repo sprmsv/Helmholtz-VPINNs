@@ -3,11 +3,11 @@ from typing import Callable, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
-from numpy.polynomial import Polynomial
 from torch import nn
 
 from quadrature_rules import gauss_lobatto_jacobi_quadrature1D, integrate_1d
-from utils import Finite_Elements, changeType
+from utils import changeType
+from testfuncs import Finite_Elements
 
 
 class FEM_HelmholtzImpedance():
@@ -133,19 +133,6 @@ class FEM_HelmholtzImpedance():
 
         return intfv + self.ga * phi_j(self.a) + self.gb * phi_j(self.b)
 
-
-    def intg(self, f: Callable) -> complex:
-        """Integrator of the class.
-
-        Args:
-            f (Callable): Function to be integrated.
-
-        Returns:
-            complex: Integral over the domain (a, b) with N_quad quadrature points.
-        """
-
-        return integrate_1d(f, self.a, self.b, self.weights, self.roots).item()
-
     def H1_error(self, u: Callable, u_x: Callable) -> float:
         """Computes the H1 error:
         .. math::
@@ -172,6 +159,19 @@ class FEM_HelmholtzImpedance():
         err_u_x = np.sqrt(self.intg(ux2))
 
         return err_u + err_u_x, err_u, err_u_x
+
+    def intg(self, func: Callable) -> complex:
+        """Integrator of the class.
+
+        Args:
+            func (Callable): Function to be integrated.
+
+        Returns:
+            complex: Integral over the domain (a, b) with N_quad quadrature points.
+        """
+
+        # return integrate_1d(f, self.a, self.b, self.weights, self.roots).item()
+        return (self.b - self.a) * np.sum(func(self.roots) * self.weights) / 2
 
     def __call__(self, x: float) -> complex:
         """Returns the solution of the equation.
@@ -200,8 +200,8 @@ class Exact_HelmholtzImpedance():
         self.a, self.b = a, b
         self.ga, self.gb = ga, gb
 
-        self.N_quad = 100
-        self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(self.N_quad, a, b)
+        self.quad_N = 100
+        self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, a, b)
         self.roots, self.weights = self.roots.numpy(), self.weights.numpy()
 
     def w(self, x) -> Callable:
@@ -218,22 +218,22 @@ class Exact_HelmholtzImpedance():
         G = lambda t: np.exp(1j * self.k * np.abs(x - t)) / (2j * self.k)
         return self.intg(G, self.a, s)
 
-    def intg(self, f: Callable, a: float =None, b: float=None) -> complex:
+    def intg(self, func: Callable, a: float =None, b: float=None) -> complex:
         """Integrator of the class.
 
         Args:
-            f (Callable): Function to be integrated.
+            func (Callable): Function to be integrated.
             a (float): Left boundary.
             b (float): Right boundary.
 
         Returns:
-            complex: Integral over the domain (a, b) with N_quad quadrature points.
+            complex: Integral over the domain (a, b) with quad_N quadrature points.
         """
 
-        roots, weights = gauss_lobatto_jacobi_quadrature1D(self.N_quad, a, b)
+        roots, weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, a, b)
         roots, weights = roots.numpy(), weights.numpy()
 
-        return integrate_1d(f, a, b, weights, roots).item()
+        return integrate_1d(func, a, b, weights, roots).item()
 
     def __call__(self):
         u = lambda x: self.uG(x) + self.w(x)
@@ -271,7 +271,7 @@ def Exact_HelmholtzImpedance_const(f: float, k: float,\
 class VPINN_HelmholtzImpedance(nn.Module):
     def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
         ga: complex, gb: complex, *, layers=[1, 10, 2], activation=F.relu, dropout_probs=None,
-        res_id: int =2, penalty=None, N_quad=80, seed=None, cuda=False):
+        res_id: int =2, penalty=None, quad_N=80, seed=None, cuda=False):
 
         # Ensure reproducibility
         if seed:
@@ -285,9 +285,11 @@ class VPINN_HelmholtzImpedance(nn.Module):
         assert layers[-1] == 2
 
         # Initialize
-        super(VPINN_HelmholtzImpedance, self).__init__()
+        super().__init__()
         self.activation = activation
         self.res_id = res_id
+        self.cuda_ = cuda
+        self.quad_N = quad_N
 
         # Store equation parameters
         self.f = f
@@ -301,9 +303,12 @@ class VPINN_HelmholtzImpedance(nn.Module):
         self.gb_im = changeType(gb.imag, 'Tensor').float().view(-1, 1)
 
         # Store quadrature points
-        self.roots, self.weights = gauss_lobatto_jacobi_quadrature1D(N_quad, a, b)
-        self.roots = self.roots.float().view(-1, 1).requires_grad_()
-        self.weights = self.weights.float().view(-1, 1)
+        roots, weights = gauss_lobatto_jacobi_quadrature1D(quad_N, a, b)
+        roots = roots.float().view(-1, 1).requires_grad_()
+        weights = weights.float().view(-1, 1)
+        if cuda:
+            roots, weights = roots.cuda(), weights.cuda()
+        self.quadpoints = (roots, weights)
 
         # Move variables to CUDA
         if cuda:
@@ -316,8 +321,6 @@ class VPINN_HelmholtzImpedance(nn.Module):
             self.ga_im = self.ga_im.cuda()
             self.gb_re = self.gb_re.cuda()
             self.gb_im = self.gb_im.cuda()
-            self.roots = self.roots.cuda()
-            self.weights = self.weights.cuda()
 
         # Define modules
         self.length = len(layers)  # Number of layers
@@ -344,7 +347,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
             nn.init.ones_(lin.weight)
             # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
             # nn.init.normal_(lin.weight, mean=1., std=.5)
-            lin.bias = nn.Parameter(-1 * torch.linspace(a - 1e-06, b, layers[1] + 1).float()[:-1])
+            lin.bias = nn.Parameter(-1 * torch.linspace(a - 1e-01, b, layers[1] + 1).float()[:-1])
             # nn.init.uniform_(lin.bias, a=a, b=b)
         nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
         nn.init.zeros_(self.lins[-1].bias)
@@ -372,21 +375,31 @@ class VPINN_HelmholtzImpedance(nn.Module):
         errors = []
         K = len(testfunctions)
 
+        # Define quadrature points for each test function
+        for v_k in testfunctions:
+            if v_k.domain_:
+                xl = v_k.domain_[0]
+                xr = v_k.domain_[2]
+                roots, weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, xl, xr)
+                roots = roots.float().view(-1, 1).requires_grad_()
+                weights = weights.float().view(-1, 1)
+                if self.cuda_:
+                    roots, weights = roots.cuda(), weights.cuda()
+                v_k.quadpoints = (roots, weights)
+            else:
+                v_k.quadpoints = self.quadpoints
+
         for epoch in range(epochs + 1):
             loss = 0
 
             for v_k in testfunctions:
-                loss += self.loss_v(v_k, i=self.res_id) / K
+                loss += self.loss_v(v_k, i=self.res_id, quadpoints=v_k.quadpoints) / K
 
             if self.penalty:
                 u_re = lambda x: self.deriv(0, x)[0]
                 u_im = lambda x: self.deriv(0, x)[1]
                 u_x_re = lambda x: self.deriv(1, x)[0]
                 u_x_im = lambda x: self.deriv(1, x)[1]
-
-                # pen = self.penalty * (1 / u_re(self.roots).norm().pow(4) + 1 / u_im(self.roots).norm().pow(4))
-                # pen_x = self.penalty * (1 / u_x_re(self.roots).norm().pow(4) + 1 / u_x_im(self.roots).norm().pow(4))
-                # loss += pen_x
 
                 loss_ga_re = self.ga_re + u_x_re(self.a) - self.k * u_im(self.a)
                 loss_ga_im = self.ga_im + u_x_im(self.a) + self.k * u_re(self.a)
@@ -402,7 +415,6 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 errors.append(error)
             if epoch % 50 == 0:
                 if exact:
-                    # print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}, pen ={pen.item():.3e}')
                     print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}')
                 else:
                     print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}')
@@ -410,12 +422,14 @@ class VPINN_HelmholtzImpedance(nn.Module):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            # scheduler.step(error[0] if exact else loss)
             scheduler.step()
 
         return losses, errors
 
-    def loss_v(self, v_k: Callable, i: int):
+    def loss_v(self, v_k: Callable, i: int, quadpoints: tuple):
+
+        F_k_re = self.intg(lambda x: self.f(x) * v_k(x), quadpoints)
+        F_k_im = 0  # In case of complex source function
 
         u_re = lambda x: self.deriv(0, x)[0]
         u_im = lambda x: self.deriv(0, x)[1]
@@ -424,44 +438,41 @@ class VPINN_HelmholtzImpedance(nn.Module):
             u_xx_re = lambda x: self.deriv(2, x)[0]
             u_xx_im = lambda x: self.deriv(2, x)[1]
 
-            R_k_re = - self.intg(lambda x: u_xx_re(x) * v_k(x)) \
-                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x))
+            R_k_re = - self.intg(lambda x: u_xx_re(x) * v_k(x), quadpoints) \
+                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x), quadpoints)
 
             R_k_im = - self.intg(lambda x: u_xx_im(x) * v_k(x)) \
-                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x))
+                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x), quadpoints)
 
         elif i == 2:
             u_x_re = lambda x: self.deriv(1, x)[0]
             u_x_im = lambda x: self.deriv(1, x)[1]
 
-            R_k_re = self.intg(lambda x: u_x_re(x) * v_k.deriv(1)(x)) \
-                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x))\
+            R_k_re = self.intg(lambda x: u_x_re(x) * v_k.deriv(1)(x), quadpoints) \
+                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x), quadpoints)\
                 - (self.ga_re - self.k * u_im(self.a)) * v_k(self.a)\
                 - (self.gb_re - self.k * u_im(self.b)) * v_k(self.b)
 
-            R_k_im = self.intg(lambda x: u_x_im(x) * v_k.deriv(1)(x)) \
-                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x))\
+            R_k_im = self.intg(lambda x: u_x_im(x) * v_k.deriv(1)(x), quadpoints) \
+                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x), quadpoints)\
                 - (self.ga_im + self.k * u_re(self.a)) * v_k(self.a)\
                 - (self.gb_im + self.k * u_re(self.b)) * v_k(self.b)
 
         elif i == 3:
-            R_k_re = - self.intg(lambda x: u_re(x) * v_k.deriv(2)(x)) \
-                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x))\
+            R_k_re = - self.intg(lambda x: u_re(x) * v_k.deriv(2)(x), quadpoints) \
+                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x), quadpoints)\
                 - (self.ga_re - self.k * u_im(self.a)) * v_k(self.a)\
                 - (self.gb_re - self.k * u_im(self.b)) * v_k(self.b)\
                 + (u_re(self.b) * v_k.deriv(1)(self.b)) - (u_re(self.a) * v_k.deriv(1)(self.a))
 
-            R_k_im = - self.intg(lambda x: u_im(x) * v_k.deriv(2)(x)) \
-                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x))\
+            R_k_im = - self.intg(lambda x: u_im(x) * v_k.deriv(2)(x), quadpoints) \
+                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x), quadpoints)\
                 - (self.ga_im + self.k * u_re(self.a)) * v_k(self.a)\
                 - (self.gb_im + self.k * u_re(self.b)) * v_k(self.b)\
                 + (u_im(self.b) * v_k.deriv(1)(self.b)) - (u_im(self.a) * v_k.deriv(1)(self.a))
 
         else:
             raise ValueError(f'{i} is not a valid input for VPINN_HelmholtzImpedance.loss().')
-
-        F_k_re = self.intg(lambda x: self.f(x) * v_k(x))
-        F_k_im = 0  # In case of complex source function
 
         return (R_k_re - F_k_re).pow(2) + (R_k_im - F_k_im).pow(2)
 
@@ -505,11 +516,11 @@ class VPINN_HelmholtzImpedance(nn.Module):
             float: L2 norm of the derivative of the solution
         """
         def sol(x):
-            sol_ = u(x.detach().view(-1).numpy())
-            return torch.Tensor([sol_.real, sol_.imag]).T
+            sol = u(x.detach().view(-1).numpy())
+            return torch.Tensor([sol.real, sol.imag]).T
         def der(x):
-            der_ = u_x(x.detach().view(-1).numpy())
-            return torch.Tensor([der_.real, der_.imag]).T
+            der = u_x(x.detach().view(-1).numpy())
+            return torch.Tensor([der.real, der.imag]).T
 
         u2 = lambda x: (sol(x) - self(x)).pow(2).sum(axis=1)
         ux2_re = lambda x: (der(x)[:, 0] - self.deriv(1, x)[0].view(-1)).pow(2)
@@ -521,17 +532,21 @@ class VPINN_HelmholtzImpedance(nn.Module):
 
         return err_u + err_u_x, err_u, err_u_x
 
-    def intg(self, func: Callable) -> complex:
+    def intg(self, func: Callable, quadpoints: tuple =None) -> complex:
         """Integrator of the class.
 
         Args:
             f (Callable): Function to be integrated.
+            quadpoints (tuple): Quadrature points (roots, weights). Defaults to None.
 
         Returns:
             complex: Integral over the domain (a, b) with N_quad quadrature points.
         """
 
-        return (self.b - self.a) * torch.sum(func(self.roots) * self.weights) / 2
+        if not quadpoints: quadpoints = self.quadpoints
+        roots, weights = quadpoints
+
+        return (roots[-1] - roots[0]) * torch.sum(func(roots) * weights) / 2
 
     def __len__(self):
         return self.length - 2  # Number of hidden layers / depth
