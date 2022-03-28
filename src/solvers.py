@@ -317,6 +317,12 @@ class VPINN_HelmholtzImpedance(nn.Module):
         self.res_id = res_id
         self.cuda_ = cuda
         self.quad_N = quad_N
+        self.history = {
+            'epochs': [],
+            'losses': [],
+            'errors': None,
+        }
+        self.e = 0
 
         # Store equation parameters
         self.f = f
@@ -330,7 +336,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
         self.gb_im = changeType(gb.imag, 'Tensor').float().view(-1, 1)
 
         # Store quadrature points
-        roots, weights = gauss_lobatto_jacobi_quadrature1D(quad_N, a, b)
+        roots, weights = gauss_lobatto_jacobi_quadrature1D(quad_N, a, b)  # FIXME: Change to quad_N for Legendre polynomials!!
         roots = roots.float().view(-1, 1).requires_grad_()
         weights = weights.float().view(-1, 1)
         if cuda:
@@ -374,7 +380,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
             nn.init.ones_(lin.weight)
             # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
             # nn.init.normal_(lin.weight, mean=1., std=.5)
-            lin.bias = nn.Parameter(-1 * torch.linspace(a - .05 * (b - a), b, layers[1] + 1).float()[:-1])
+            lin.bias = nn.Parameter(-1 * torch.linspace(a - .005 * (b - a), b, layers[1] + 1).float()[:-1])
             # nn.init.uniform_(lin.bias, a=a, b=b)
         nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
         nn.init.zeros_(self.lins[-1].bias)
@@ -397,9 +403,9 @@ class VPINN_HelmholtzImpedance(nn.Module):
     def train_(self, testfunctions: list, epochs: int, optimizer, scheduler=None,
     exact: tuple =None):
 
+        if exact and not self.history['errors']:
+            self.history['errors'] = {'tot': [], 'sol': [], 'der': []}
         self.train()
-        losses = []
-        errors = []
         K = len(testfunctions)
 
         # Define quadrature points for each test function
@@ -416,7 +422,8 @@ class VPINN_HelmholtzImpedance(nn.Module):
             else:
                 v_k.quadpoints = self.quadpoints
 
-        for epoch in range(epochs + 1):
+        epochs += self.e
+        for e in range(self.e, epochs + 1):
             loss = 0
 
             for v_k in testfunctions:
@@ -436,22 +443,26 @@ class VPINN_HelmholtzImpedance(nn.Module):
                                         + loss_gb_re.pow(2) + loss_gb_im.pow(2))
                 loss += pen
 
-            losses.append(loss.item())
-            if exact:
-                error = self.H1_error(exact[0], exact[1])
-                errors.append(error)
-            if epoch % 50 == 0:
+            if e % 1 == 0:
+                # Store the loss and the error
+                self.history['epochs'].append(e)
+                self.history['losses'].append(loss.item())
                 if exact:
-                    print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}')
+                    error = self.H1_error(exact[0], exact[1])
+                    self.history['errors']['tot'].append(error[0].item())
+                    self.history['errors']['sol'].append(error[1].item())
+                    self.history['errors']['der'].append(error[2].item())
+                # Print the loss and the error
+                if exact:
+                    print(f'Epoch {e:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}')
                 else:
-                    print(f'Epoch {epoch:06d} / {epochs}: loss = {loss.item():.3e}')
+                    print(f'Epoch {e:06d} / {epochs}: loss = {loss.item():.3e}')
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             scheduler.step()
-
-        return losses, errors
+            self.e += 1
 
     def loss_v(self, v_k: Callable, i: int, quadpoints: tuple):
 

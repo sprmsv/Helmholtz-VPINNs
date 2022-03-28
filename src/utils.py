@@ -7,20 +7,67 @@ def changeType(x, target='Tensor'):
         if target == 'Tensor':
             return torch.tensor(x)
 
-def plot_train_process(losses, errors):
-    plt.rcParams['figure.figsize'] = [15, 10]
-    fig, axs = plt.subplots(2, 1)
+def plot_history(history):
+
+    epochs = history['epochs']
+    losses = history['losses']
+    errors = history['errors']
+
+    plt.rcParams['figure.figsize'] = [15, 10] if errors else [15, 5]
+    fig, axs = plt.subplots(2, 1) if errors else plt.subplots(1, 1)
     fig.tight_layout(pad=4.0)
-    fig.suptitle(f'Parameters of the model')
+    fig.suptitle(f'Training loss and H1-error')
 
-    axs[0].plot(range(len(losses)), losses, label='Total Loss')
-    axs[1].plot(range(len(losses)), [error[0] for error in errors], label='Solution H1-error')
-    # axs[1].plot(range(len(losses)), [error[1] for error in errors], label='Solution L2-error')
-    axs[1].plot(range(len(losses)), [error[2] for error in errors], label='Derivative L2-error')
+    if errors:
+        axs[0].plot(epochs, losses, label='Total Loss')
+        axs[1].plot(epochs, errors['tot'], label='Solution H1-error')
+        # axs[1].plot(epochs, errors['sol'], label='Solution L2-error')
+        axs[1].plot(epochs, errors['der'], label='Derivative L2-error')
+        axs[0].set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Loss')
+        axs[1].set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Error')
+        for ax in axs:
+            ax.grid(which='both')
+            ax.legend()
+    else:
+        axs.plot(epochs, losses, label='Total Loss')
+        axs.set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Loss')
+        axs.grid(which='both')
+        axs.legend()
 
-    axs[0].set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Loss')
-    axs[1].set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Error')
+def plot_validation(xpts, upts, rpts, title='Validation', subscript='', file=None):
 
-    for ax in axs:
-        ax.grid(which='both')
-        ax.legend()
+    upts_re = upts[0]
+    upts_im = upts[1]
+    rpts_re = rpts[0]
+    rpts_im = rpts[1]
+
+    plt.rcParams['figure.figsize'] = [15, 10]
+    fig, axs = plt.subplots(3, 2)
+    fig.tight_layout(pad=4.0)
+    fig.suptitle(title)
+
+    axs[0, 0].plot(xpts, upts_re, label='$u'+subscript+'(x)$')
+    axs[0, 0].plot(xpts, rpts_re, label='$u^N'+subscript+'(x)$')
+    axs[0, 0].set(xlabel='x', ylabel='$Re[u'+subscript+'(x)]$')
+    axs[0, 1].plot(xpts, upts_im, label='$u'+subscript+'(x)$')
+    axs[0, 1].plot(xpts, rpts_im, label='$u^N'+subscript+'(x)$')
+    axs[0, 1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)]$')
+
+    axs[1, 0].errorbar(xpts, upts_re, yerr=(upts_re - rpts_re), ecolor='black', label='$u'+subscript+'(x)$')
+    axs[1, 0].set(xlabel='x', ylabel='$Re[u'+subscript+'(x)]$')
+    axs[1, 1].errorbar(xpts, upts_im, yerr=(upts_im - rpts_im), ecolor='black', label='$u'+subscript+'(x)$')
+    axs[1, 1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)]$')
+
+    axs[2, 0].plot(xpts, upts_re - rpts_re)
+    axs[2, 0].set(xlabel='x', ylabel='$Re[u'+subscript+'(x)-u^N'+subscript+'(x)]$')
+    axs[2, 1].plot(xpts, upts_im - rpts_im)
+    axs[2, 1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)-u^N'+subscript+'(x)]$')
+
+    for row in axs:
+        for ax in row:
+            ax.grid()
+            if len(ax.get_legend_handles_labels()[1]) > 0:
+                ax.legend()
+
+    if file:
+        plt.savefig(file)
