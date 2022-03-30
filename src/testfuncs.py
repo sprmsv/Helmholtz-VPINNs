@@ -24,6 +24,7 @@ class Finite_Elements:
 
     def __init__(self, K: int, a: float =-1, b: float =+1, dtype=torch.Tensor):
 
+        self.__name__ = 'Fin'
         self.dtype = dtype
         self.h = (b - a) / K
         self.K = K
@@ -178,6 +179,7 @@ class Legendre_Polynomials:
             for j in range(1, K + 1):
                 c[k, j] = (2 * k - 1) / k * c[k - 1, j - 1] - (k - 1) / k * c[k - 2, j]
 
+        self.__name__ = 'Leg'
         self.K = K
         self.c = c
         self.a = a

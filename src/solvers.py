@@ -443,7 +443,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
                                         + loss_gb_re.pow(2) + loss_gb_im.pow(2))
                 loss += pen
 
-            if e % 1 == 0:
+            if e % 100 == 0:
                 # Store the loss and the error
                 self.history['epochs'].append(e)
                 self.history['losses'].append(loss.item())

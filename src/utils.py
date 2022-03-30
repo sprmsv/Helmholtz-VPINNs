@@ -7,7 +7,7 @@ def changeType(x, target='Tensor'):
         if target == 'Tensor':
             return torch.tensor(x)
 
-def plot_history(history):
+def plot_history(history, file=None):
 
     epochs = history['epochs']
     losses = history['losses']
@@ -33,6 +33,8 @@ def plot_history(history):
         axs.set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Loss')
         axs.grid(which='both')
         axs.legend()
+
+    if file: plt.savefig(file)
 
 def plot_validation(xpts, upts, rpts, title='Validation', subscript='', file=None):
 
@@ -69,5 +71,4 @@ def plot_validation(xpts, upts, rpts, title='Validation', subscript='', file=Non
             if len(ax.get_legend_handles_labels()[1]) > 0:
                 ax.legend()
 
-    if file:
-        plt.savefig(file)
+    if file: plt.savefig(file)
