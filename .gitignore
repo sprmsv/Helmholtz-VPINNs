@@ -129,5 +129,5 @@ dmypy.json
 .pyre/
 
 # Custom
-tmp.ipynb
+tmp.*
 results/

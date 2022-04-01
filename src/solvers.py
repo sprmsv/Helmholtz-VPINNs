@@ -1,11 +1,12 @@
 from typing import Callable, Union
+import time
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
 
-from quadrature_rules import gauss_lobatto_jacobi_quadrature1D, integrate_1d
+from quadrature_rules import gauss_lobatto_jacobi_quadrature1D
 from utils import changeType
 from testfuncs import Finite_Elements
 
@@ -322,7 +323,8 @@ class VPINN_HelmholtzImpedance(nn.Module):
             'losses': [],
             'errors': None,
         }
-        self.e = 0
+        self.epoch = 0
+        self.time_elapsed = 0
 
         # Store equation parameters
         self.f = f
@@ -422,8 +424,9 @@ class VPINN_HelmholtzImpedance(nn.Module):
             else:
                 v_k.quadpoints = self.quadpoints
 
-        epochs += self.e
-        for e in range(self.e, epochs + 1):
+        epochs += self.epoch - 1 if self.epoch else self.epoch
+        for e in range(self.epoch, epochs + 1):
+            time_start = time.process_time()
             loss = 0
 
             for v_k in testfunctions:
@@ -443,7 +446,9 @@ class VPINN_HelmholtzImpedance(nn.Module):
                                         + loss_gb_re.pow(2) + loss_gb_im.pow(2))
                 loss += pen
 
-            if e % 100 == 0:
+            if e % 100 == 0 or e == epochs:
+                # Calculate minutes elapsed
+                mins = int(self.time_elapsed // 60)
                 # Store the loss and the error
                 self.history['epochs'].append(e)
                 self.history['losses'].append(loss.item())
@@ -454,15 +459,16 @@ class VPINN_HelmholtzImpedance(nn.Module):
                     self.history['errors']['der'].append(error[2].item())
                 # Print the loss and the error
                 if exact:
-                    print(f'Epoch {e:06d} / {epochs}: loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}')
+                    print(f'{mins:03d}m elapsed :: Epoch {e:06d} / {epochs}: Loss = {loss.item():.3e}, H1-error = {error[0].item():.3e}')
                 else:
-                    print(f'Epoch {e:06d} / {epochs}: loss = {loss.item():.3e}')
+                    print(f'{mins:03d}m elapsed :: Epoch {e:06d} / {epochs}: Loss = {loss.item():.3e}')
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             scheduler.step()
-            self.e += 1
+            self.epoch += 1
+            self.time_elapsed += time.process_time() - time_start
 
     def loss_v(self, v_k: Callable, i: int, quadpoints: tuple):
 
@@ -565,6 +571,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
         ux2_im = lambda x: (der(x)[:, 1] - self.deriv(1, x)[1].view(-1)).pow(2)
         ux2 = lambda x: ux2_re(x) + ux2_im(x)
 
+        self.eval()
         err_u = torch.sqrt(self.intg(u2))
         err_u_x = torch.sqrt(self.intg(ux2))
 
