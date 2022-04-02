@@ -1,3 +1,4 @@
+import os
 import json
 import argparse
 import ast
@@ -157,6 +158,10 @@ def main(args):
 
         if input('>> Enter "save" to save the results: ') == 'save':
             model.eval()
+
+            # Create the directory
+            if not os.path.exists(file_dir):
+                os.makedirs(file_dir)
 
             # Save information
             file = file_dir + experiment_name + '-info.json'
