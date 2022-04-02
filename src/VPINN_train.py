@@ -1,5 +1,6 @@
 import json
 import argparse
+import ast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -30,6 +31,17 @@ parser.add_argument('--dir', type=str, default=None,
 parser.add_argument('--name', type=str, default=None,
                     help='Experiment name', dest='name', required=False)
 
+parser.add_argument('--cuda', type=ast.literal_eval, default=False,
+                    help='Use GPU', dest='cuda', required=False)
+
+parser.add_argument('--seed', type=int, default=None,
+                    help='Random seed', dest='seed', required=False)
+
+parser.add_argument('--pen', type=float, default=None,
+                    help='Penalty term coefficient', dest='penalty', required=False)
+
+parser.add_argument('--init_optimal', type=ast.literal_eval, default=False,
+                    help='Optimal initialization', dest='init_optimal', required=False)
 
 
 def main(args):
@@ -38,11 +50,7 @@ def main(args):
     depth = int(args.params[1:4])
     width = int(args.params[5:8])
     testfuncs = int(args.params[9:12])
-    penalty = None
-    cuda = False
-    seed = None
     dropout_probs = None
-    init_perfect = False
 
     # Define the parameters of the equation
     f = lambda x: 10  # Source function
@@ -92,15 +100,15 @@ def main(args):
                                     layers=[1] + [width for _ in range(depth)] + [2],
                                     activation=activation,
                                     dropout_probs=dropout_probs,
-                                    penalty=penalty,
+                                    penalty=args.penalty,
                                     quad_N=100,
-                                    seed=seed,
-                                    cuda=cuda,
+                                    seed=args.seed,
+                                    cuda=args.cuda,
                                     )
-    if cuda: model = model.cuda()
+    if args.cuda: model = model.cuda()
 
     # Initialize close to the solution to check the convergence
-    if init_perfect:
+    if args.init_optimal:
         points = torch.linspace(a - 1e-06, b, width + 1).float()
         derivs = torch.zeros_like(model.lins[1].weight)
         for i, point, next in zip(range(width), points[:-1], points[1:]):
@@ -160,15 +168,15 @@ def main(args):
                     'testfunctions': testfunctions.__name__,
                     'activation': activation.__name__,
                     'dropout_probs': dropout_probs,
-                    'penalty': penalty,
+                    'penalty': args.penalty,
                 },
                 'H1-error': model.history['errors']['tot'][-1] if model.history['errors'] else None,
                 'Loss': model.history['losses'][-1] if model.history['losses'] else None,
                 'minutes': int(model.time_elapsed // 60),
                 'epochs': model.epoch,
                 'stages': stages,
-                'seed': seed,
-                'cuda': cuda,
+                'seed': args.seed,
+                'cuda': args.cuda,
                 'equation': {
                     # 'f': f.__name__,
                     'k': k,
@@ -264,4 +272,6 @@ def main(args):
 
 if __name__ == '__main__':
     args = parser.parse_args()
+    if args.cuda and not torch.cuda.is_available():
+        raise ValueError('CUDA is not available.')
     main(args)
