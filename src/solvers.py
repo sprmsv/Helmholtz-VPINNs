@@ -399,8 +399,8 @@ class VPINN_HelmholtzImpedance(nn.Module):
         # Define quadrature points for each test function
         for v_k in testfunctions:
             if v_k.domain_:
-                xl = v_k.domain_[0]
-                xr = v_k.domain_[2]
+                xl = v_k.domain_[0].item()
+                xr = v_k.domain_[2].item()
                 roots, weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, xl, xr)
                 roots = roots.float().view(-1, 1).to(self.device).requires_grad_()
                 weights = weights.float().view(-1, 1).to(self.device)
