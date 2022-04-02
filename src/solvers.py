@@ -341,15 +341,13 @@ class VPINN_HelmholtzImpedance(nn.Module):
         roots, weights = gauss_lobatto_jacobi_quadrature1D(quad_N, a, b)  # FIXME: Change to quad_N for Legendre polynomials!!
         roots = roots.float().view(-1, 1).requires_grad_()
         weights = weights.float().view(-1, 1)
-        if cuda:
-            roots, weights = roots.cuda(), weights.cuda()
+        if cuda: roots, weights = roots.cuda(), weights.cuda()
         self.quadpoints = (roots, weights)
 
         # Move variables to CUDA
         if cuda:
-            if not torch.cuda.is_available(): raise Exception('Cuda is not available.')
             self.k = self.k.cuda()
-            self.penalty = self.penalty.cuda()
+            if self.penalty: self.penalty = self.penalty.cuda()
             self.a = self.a.cuda()
             self.b = self.b.cuda()
             self.ga_re = self.ga_re.cuda()
