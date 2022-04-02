@@ -1,3 +1,4 @@
+import os
 import json
 import argparse
 import ast
@@ -73,7 +74,8 @@ def main(args):
 
     # Test functions
     if args.testfuncs_type == 'Finite Elements':
-        testfunctions = Finite_Elements(testfuncs - 1, a, b, dtype=torch.Tensor)
+        testfunctions = Finite_Elements(testfuncs - 1, a, b, dtype=torch.Tensor
+            , device=torch.device('cuda') if args.cuda else torch.device('cpu'))
     elif args.testfuncs_type == 'Legendre Polynomials':
         testfunctions = Legendre_Polynomials(testfuncs - 1, a, b)
     else:
@@ -157,6 +159,10 @@ def main(args):
         if input('>> Enter "save" to save the results: ') == 'save':
             model.eval()
 
+            # Create the directory
+            if not os.path.exists(file_dir):
+                os.makedirs(file_dir)
+
             # Save information
             file = file_dir + experiment_name + '-info.json'
             info = {
@@ -176,7 +182,7 @@ def main(args):
                 'epochs': model.epoch,
                 'stages': stages,
                 'seed': args.seed,
-                'cuda': args.cuda,
+                'device': model.device.type,
                 'equation': {
                     # 'f': f.__name__,
                     'k': k,
@@ -204,12 +210,12 @@ def main(args):
             fig, axs = plt.subplots(3, 1)
             fig.tight_layout(pad=4.0)
             fig.suptitle(f'Parameters of the model')
-            axs[0].scatter(np.arange(1, width + 1), model.lins[0].weight.detach().view(-1).numpy(), label='$w_n$')
-            axs[1].scatter(np.arange(1, width + 1), model.lins[0].bias.detach().view(-1).numpy(), label='$b_n$')
-            axs[2].scatter(np.arange(1, width + 1), model.lins[1].weight[0].detach().view(-1).numpy(), label='$c^1_n$')
-            axs[2].scatter(np.arange(1, width + 1), model.lins[1].weight[1].detach().view(-1).numpy(), label='$c^2_n$')
-            axs[2].scatter(0, model.lins[1].bias[0].detach().view(-1).numpy(), label=f'$c^1_0$={model.lins[1].bias[0].item():.2f}', color='black')
-            axs[2].scatter(0, model.lins[1].bias[1].detach().view(-1).numpy(), label=f'$c^2_0$={model.lins[1].bias[1].item():.2f}', color='black')
+            axs[0].scatter(np.arange(1, width + 1), model.lins[0].weight.detach().view(-1).cpu().numpy(), label='$w_n$')
+            axs[1].scatter(np.arange(1, width + 1), model.lins[0].bias.detach().view(-1).cpu().numpy(), label='$b_n$')
+            axs[2].scatter(np.arange(1, width + 1), model.lins[1].weight[0].detach().view(-1).cpu().numpy(), label='$c^1_n$')
+            axs[2].scatter(np.arange(1, width + 1), model.lins[1].weight[1].detach().view(-1).cpu().numpy(), label='$c^2_n$')
+            axs[2].scatter(0, model.lins[1].bias[0].detach().view(-1).cpu().numpy(), label=f'$c^1_0$={model.lins[1].bias[0].item():.2f}', color='black')
+            axs[2].scatter(0, model.lins[1].bias[1].detach().view(-1).cpu().numpy(), label=f'$c^2_0$={model.lins[1].bias[1].item():.2f}', color='black')
             for ax in axs:
                 ax.grid()
                 ax.legend()
@@ -227,13 +233,13 @@ def main(args):
             # Plot the solutions
             xpts = torch.linspace(a, b, 301).float().view(-1, 1)
             upts_re, upts_im = u(xpts).real, u(xpts).imag
-            rpts_re, rpts_im = model.deriv(0, xpts)
+            rpts_re, rpts_im = model.deriv(0, xpts.to(model.device))
             with torch.no_grad():
                 xpts = xpts.numpy().reshape(-1)
                 upts_re = upts_re.numpy().reshape(-1)
                 upts_im = upts_im.numpy().reshape(-1)
-                rpts_re = rpts_re.numpy().reshape(-1)
-                rpts_im = rpts_im.numpy().reshape(-1)
+                rpts_re = rpts_re.cpu().numpy().reshape(-1)
+                rpts_im = rpts_im.cpu().numpy().reshape(-1)
 
             file = file_dir + experiment_name + '-sol.png'
             plot_validation(
@@ -247,13 +253,13 @@ def main(args):
             xpts = torch.linspace(a, b, 301).float().view(-1, 1)
             upts_re, upts_im = u_x(xpts).real, u_x(xpts).imag
             xpts.requires_grad_()
-            rpts_re, rpts_im = model.deriv(1, xpts)
+            rpts_re, rpts_im = model.deriv(1, xpts.to(model.device))
             with torch.no_grad():
                 xpts = xpts.numpy().reshape(-1)
                 upts_re = upts_re.numpy().reshape(-1)
                 upts_im = upts_im.numpy().reshape(-1)
-                rpts_re = rpts_re.numpy().reshape(-1)
-                rpts_im = rpts_im.numpy().reshape(-1)
+                rpts_re = rpts_re.cpu().numpy().reshape(-1)
+                rpts_im = rpts_im.cpu().numpy().reshape(-1)
             file = file_dir + experiment_name + '-der.png'
             plot_validation(
                 xpts, (upts_re, upts_im), (rpts_re, rpts_im),
