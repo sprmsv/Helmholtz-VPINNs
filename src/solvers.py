@@ -544,11 +544,11 @@ class VPINN_HelmholtzImpedance(nn.Module):
             float: L2 norm of the derivative of the solution
         """
         def sol(x):
-            sol = u(x.detach().view(-1).numpy())
-            return torch.Tensor([sol.real, sol.imag]).T
+            sol = u(x.detach().view(-1).cpu().numpy())
+            return torch.Tensor([sol.real, sol.imag], device=self.device).T
         def der(x):
-            der = u_x(x.detach().view(-1).numpy())
-            return torch.Tensor([der.real, der.imag]).T
+            der = u_x(x.detach().view(-1).cpu().numpy())
+            return torch.Tensor([der.real, der.imag], device=self.device).T
 
         u2 = lambda x: (sol(x) - self(x)).pow(2).sum(axis=1)
         ux2_re = lambda x: (der(x)[:, 0] - self.deriv(1, x)[0].view(-1)).pow(2)
