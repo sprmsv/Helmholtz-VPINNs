@@ -1,3 +1,5 @@
+import json
+
 import matplotlib.pyplot as plt
 import torch
 
@@ -7,32 +9,39 @@ def changeType(x, target='Tensor'):
         if target == 'Tensor':
             return torch.tensor(x)
 
-def plot_history(history, file=None):
+def plot_history(history, file=None, fig=None, detailed=True, label=None):
+    """Plot the training history of the model.
+    """
 
     epochs = history['epochs']
     losses = history['losses']
     errors = history['errors']
 
-    plt.rcParams['figure.figsize'] = [15, 10] if errors else [15, 5]
-    fig, axs = plt.subplots(2, 1) if errors else plt.subplots(1, 1)
-    fig.tight_layout(pad=4.0)
-    fig.suptitle(f'Training loss and H1-error')
+    if not fig:
+        plt.rcParams['figure.figsize'] = [15, 10] if errors else [15, 5]
+        fig, _ = plt.subplots(2, 1) if errors else plt.subplots(1, 1)
+        fig.tight_layout(pad=4.0)
+        fig.suptitle(f'Training loss and H1-error')
+    axs = fig.axes
 
-    if errors:
-        axs[0].plot(epochs, losses, label='Total Loss')
-        axs[1].plot(epochs, errors['tot'], label='Solution H1-error')
-        # axs[1].plot(epochs, errors['sol'], label='Solution L2-error')
-        axs[1].plot(epochs, errors['der'], label='Derivative L2-error')
-        axs[0].set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Loss')
+    # Plot the loss
+    axs[0].plot(epochs, losses, label=label if label else 'Total Loss')
+    axs[0].set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Loss')
+
+    # Plot the error(s)
+    if len(axs) == 2 and errors:
+        axs[1].plot(epochs, errors['tot'],
+                    label= label if label else 'Solution H1-error')
+        if detailed:
+            # axs[1].plot(epochs, errors['sol']
+            #       , label=label+': Solution L2-error' if label else 'Solution L2-error')
+            axs[1].plot(epochs, errors['der'],
+                    label=label if label else 'Derivative L2-error')
         axs[1].set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Error')
-        for ax in axs:
-            ax.grid(which='both')
-            ax.legend()
-    else:
-        axs.plot(epochs, losses, label='Total Loss')
-        axs.set(xscale='linear', yscale='log', xlabel='Epoch', ylabel='Loss')
-        axs.grid(which='both')
-        axs.legend()
+
+    for ax in axs:
+        ax.grid(which='both')
+        ax.legend()
 
     if file: plt.savefig(file)
 
@@ -70,5 +79,24 @@ def plot_validation(xpts, upts, rpts, title='Validation', subscript='', file=Non
             ax.grid()
             if len(ax.get_legend_handles_labels()[1]) > 0:
                 ax.legend()
+
+    if file: plt.savefig(file)
+
+def plot_histories(dirs, file=None, fig=None, plot_error=True):
+    """Plot the training histories of the models in the given directories.
+    """
+
+    if not fig:
+        plt.rcParams['figure.figsize'] = [15, 10] if plot_error else [15, 5]
+        fig, _ = plt.subplots(2, 1) if plot_error else plt.subplots(1, 1)
+        fig.tight_layout(pad=4.0)
+        fig.suptitle(f'Training loss and H1-error')
+
+    for dir in dirs:
+        with open(dir+'-info.json', 'r') as f:
+            info = json.load(f)
+        with open(dir+'-train_history.json', 'r') as f:
+            history = json.load(f)
+        plot_history(history, file=None, fig=fig, detailed=False, label=info['model']['activation'])
 
     if file: plt.savefig(file)
