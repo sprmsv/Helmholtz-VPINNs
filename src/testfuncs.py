@@ -22,7 +22,7 @@ class derivableFunction:
 
 class Finite_Elements:
 
-    def __init__(self, K: int, a: float =-1, b: float =+1, dtype=torch.Tensor):
+    def __init__(self, K: int, a: float =-1, b: float =+1, dtype=torch.Tensor, device=None):
 
         self.__name__ = 'Fin'
         self.dtype = dtype
@@ -32,7 +32,8 @@ class Finite_Elements:
         self.b = b
 
         if self.dtype is torch.Tensor:
-            self.x = torch.linspace(a, b, K + 1)
+            self.device = device if device else torch.device('cpu')
+            self.x = torch.linspace(a, b, K + 1).to(self.device)
         elif self.dtype is np.ndarray:
             self.x = np.linspace(a, b, K + 1)
 
@@ -70,8 +71,8 @@ class Finite_Elements:
         xr = self.x[i + 1] if i != self.K else xm
 
         if self.dtype is torch.Tensor:
-            step = lambda x: torch.heaviside(x - xl, torch.tensor([1.]))\
-                - torch.heaviside(x - xr, torch.tensor([0.]))
+            step = lambda x: torch.heaviside(x - xl, torch.tensor([1.], device=self.device))\
+                - torch.heaviside(x - xr, torch.tensor([0.], device=self.device))
             return lambda x: step(x) * (1 - torch.abs((x - xm)) / self.h)
 
         elif self.dtype is np.ndarray:
@@ -95,8 +96,8 @@ class Finite_Elements:
         xr = self.x[i + 1] if i != self.K else xm
 
         if self.dtype is torch.Tensor:
-            step = lambda x: torch.heaviside(x - xl, torch.tensor([1.]))\
-                - torch.heaviside(x - xr, torch.tensor([0.]))
+            step = lambda x: torch.heaviside(x - xl, torch.tensor([1.], device=self.device))\
+                - torch.heaviside(x - xr, torch.tensor([0.], device=self.device))
         elif self.dtype is np.ndarray:
             step = lambda x: np.heaviside(x - xl, 1)\
                 - np.heaviside(x - xr, 0)

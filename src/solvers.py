@@ -316,7 +316,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
         super().__init__()
         self.activation = activation
         self.res_id = res_id
-        self.cuda_ = cuda
+        self.device = torch.device('cuda') if cuda else torch.device('cpu')
         self.quad_N = quad_N
         self.history = {
             'epochs': [],
@@ -328,32 +328,20 @@ class VPINN_HelmholtzImpedance(nn.Module):
 
         # Store equation parameters
         self.f = f
-        self.k = changeType(k, 'Tensor').float()
-        self.penalty = changeType(penalty, 'Tensor').float() if penalty else None
-        self.a = changeType(a, 'Tensor').float().view(-1, 1).requires_grad_()
-        self.b = changeType(b, 'Tensor').float().view(-1, 1).requires_grad_()
-        self.ga_re = changeType(ga.real, 'Tensor').float().view(-1, 1)
-        self.ga_im = changeType(ga.imag, 'Tensor').float().view(-1, 1)
-        self.gb_re = changeType(gb.real, 'Tensor').float().view(-1, 1)
-        self.gb_im = changeType(gb.imag, 'Tensor').float().view(-1, 1)
+        self.k = changeType(k, 'Tensor').float().to(self.device)
+        self.penalty = changeType(penalty, 'Tensor').float().to(self.device) if penalty else None
+        self.a = changeType(a, 'Tensor').float().view(-1, 1).to(self.device).requires_grad_()
+        self.b = changeType(b, 'Tensor').float().view(-1, 1).to(self.device).requires_grad_()
+        self.ga_re = changeType(ga.real, 'Tensor').float().view(-1, 1).to(self.device)
+        self.ga_im = changeType(ga.imag, 'Tensor').float().view(-1, 1).to(self.device)
+        self.gb_re = changeType(gb.real, 'Tensor').float().view(-1, 1).to(self.device)
+        self.gb_im = changeType(gb.imag, 'Tensor').float().view(-1, 1).to(self.device)
 
         # Store quadrature points
-        roots, weights = gauss_lobatto_jacobi_quadrature1D(quad_N, a, b)  # FIXME: Change to quad_N for Legendre polynomials!!
-        roots = roots.float().view(-1, 1).requires_grad_()
-        weights = weights.float().view(-1, 1)
-        if cuda: roots, weights = roots.cuda(), weights.cuda()
+        roots, weights = gauss_lobatto_jacobi_quadrature1D(quad_N, a, b)
+        roots = roots.float().view(-1, 1).to(self.device).requires_grad_()
+        weights = weights.float().view(-1, 1).to(self.device)
         self.quadpoints = (roots, weights)
-
-        # Move variables to CUDA
-        if cuda:
-            self.k = self.k.cuda()
-            if self.penalty: self.penalty = self.penalty.cuda()
-            self.a = self.a.cuda()
-            self.b = self.b.cuda()
-            self.ga_re = self.ga_re.cuda()
-            self.ga_im = self.ga_im.cuda()
-            self.gb_re = self.gb_re.cuda()
-            self.gb_im = self.gb_im.cuda()
 
         # Define modules
         self.length = len(layers)  # Number of layers
@@ -414,10 +402,8 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 xl = v_k.domain_[0]
                 xr = v_k.domain_[2]
                 roots, weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, xl, xr)
-                roots = roots.float().view(-1, 1).requires_grad_()
-                weights = weights.float().view(-1, 1)
-                if self.cuda_:
-                    roots, weights = roots.cuda(), weights.cuda()
+                roots = roots.float().view(-1, 1).to(self.device).requires_grad_()
+                weights = weights.float().view(-1, 1).to(self.device)
                 v_k.quadpoints = (roots, weights)
             else:
                 v_k.quadpoints = self.quadpoints

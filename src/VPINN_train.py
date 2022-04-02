@@ -73,7 +73,8 @@ def main(args):
 
     # Test functions
     if args.testfuncs_type == 'Finite Elements':
-        testfunctions = Finite_Elements(testfuncs - 1, a, b, dtype=torch.Tensor)
+        testfunctions = Finite_Elements(testfuncs - 1, a, b, dtype=torch.Tensor
+            , device=torch.device('cuda') if args.cuda else torch.device('cpu'))
     elif args.testfuncs_type == 'Legendre Polynomials':
         testfunctions = Legendre_Polynomials(testfuncs - 1, a, b)
     else:
@@ -176,7 +177,7 @@ def main(args):
                 'epochs': model.epoch,
                 'stages': stages,
                 'seed': args.seed,
-                'cuda': args.cuda,
+                'device': model.device.type,
                 'equation': {
                     # 'f': f.__name__,
                     'k': k,
