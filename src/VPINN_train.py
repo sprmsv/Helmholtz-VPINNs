@@ -233,13 +233,13 @@ def main(args):
             # Plot the solutions
             xpts = torch.linspace(a, b, 301).float().view(-1, 1)
             upts_re, upts_im = u(xpts).real, u(xpts).imag
-            rpts_re, rpts_im = model.deriv(0, xpts)
+            rpts_re, rpts_im = model.deriv(0, xpts.to(model.device))
             with torch.no_grad():
                 xpts = xpts.numpy().reshape(-1)
                 upts_re = upts_re.numpy().reshape(-1)
                 upts_im = upts_im.numpy().reshape(-1)
-                rpts_re = rpts_re.numpy().reshape(-1)
-                rpts_im = rpts_im.numpy().reshape(-1)
+                rpts_re = rpts_re.cpu().numpy().reshape(-1)
+                rpts_im = rpts_im.cpu().numpy().reshape(-1)
 
             file = file_dir + experiment_name + '-sol.png'
             plot_validation(
@@ -253,13 +253,13 @@ def main(args):
             xpts = torch.linspace(a, b, 301).float().view(-1, 1)
             upts_re, upts_im = u_x(xpts).real, u_x(xpts).imag
             xpts.requires_grad_()
-            rpts_re, rpts_im = model.deriv(1, xpts)
+            rpts_re, rpts_im = model.deriv(1, xpts.to(model.device))
             with torch.no_grad():
                 xpts = xpts.numpy().reshape(-1)
                 upts_re = upts_re.numpy().reshape(-1)
                 upts_im = upts_im.numpy().reshape(-1)
-                rpts_re = rpts_re.numpy().reshape(-1)
-                rpts_im = rpts_im.numpy().reshape(-1)
+                rpts_re = rpts_re.cpu().numpy().reshape(-1)
+                rpts_im = rpts_im.cpu().numpy().reshape(-1)
             file = file_dir + experiment_name + '-der.png'
             plot_validation(
                 xpts, (upts_re, upts_im), (rpts_re, rpts_im),
