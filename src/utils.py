@@ -97,6 +97,6 @@ def plot_histories(dirs, file=None, fig=None, plot_error=True):
             info = json.load(f)
         with open(dir+'-train_history.json', 'r') as f:
             history = json.load(f)
-        plot_history(history, file=None, fig=fig, detailed=False, label=info['model']['activation'])
+        plot_history(history, file=None, fig=fig, detailed=False, label='K: '+str(info['model']['testfuncs']))
 
     if file: plt.savefig(file)

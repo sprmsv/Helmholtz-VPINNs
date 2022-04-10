@@ -1,5 +1,6 @@
 from typing import Callable, Union
 import time
+import itertools
 
 import numpy as np
 import torch
@@ -235,43 +236,25 @@ class Exact_HelmholtzImpedance():
         if self.source == 'const':
             uG = - self.f / (self.k ** 2) * (1 - np.exp(1j * self.k) * np.cos(self.k * x))
         else:
-            Hf = lambda s: self.H(x, s) * self.f(s)
-            Hf_x = lambda s: self.H(x, s) * self.f_x(s)
-            uG = - (Hf(self.b) - Hf(self.a)) - self.intg(Hf_x)
+            G = lambda x, t: - .5 / (1j * self.k) * np.exp(1j * self.k * np.abs(x - t))
+            uG = self.intg(lambda s: G(x, s) * self.f(s))
         return uG
 
     def uG_x(self, x) -> Callable:
         if self.source == 'const':
             uG_x = - self.f / (self.k) * (np.exp(1j * self.k) * np.sin(self.k * x))
         else:
-            Hf = lambda s: self.H(x, s, der=1) * self.f(s)
-            Hf_x = lambda s: self.H(x, s, der=1) * self.f_x(s)
-            uG_x = - (Hf(self.b) - Hf(self.a)) - self.intg(Hf_x)
+            G_x = lambda x, t: - .5 * np.sign(x - t) * np.exp(1j * self.k * np.abs(x - t))
+            uG_x = self.intg(lambda s: G_x(x, s) * self.f(s))
         return uG_x
 
     def uG_xx(self, x) -> Callable:
         if self.source == 'const':
             uG_xx = - self.f * (np.exp(1j * self.k) * np.cos(self.k * x))
         else:
-            Hf = lambda s: self.H(x, s, der=2) * self.f(s)
-            Hf_x = lambda s: self.H(x, s, der=2) * self.f_x(s)
-            uG_xx = - (Hf(self.b) - Hf(self.a)) - self.intg(Hf_x)
+            G_xx = lambda x, t: - .5 * (1j * self.k) * np.exp(1j * self.k * np.abs(x - t))
+            uG_xx = self.intg(lambda s: G_xx(x, s) * self.f(s))
         return uG_xx
-
-    def H(self, x, s, der=0):
-        if np.allclose(self.a, s):
-            return 0
-
-        if der == 0:
-            G = lambda t: .5 / (1j * self.k) * np.exp(1j * self.k * np.abs(x - t))
-        elif der == 1:
-            G = lambda t: .5 * np.sign(x - t) * np.exp(1j * self.k * np.abs(x - t))
-        elif der == 2:
-            G = lambda t: .5 * (1j * self.k) * np.exp(1j * self.k * np.abs(x - t))
-
-        roots, weights = gauss_lobatto_jacobi_quadrature1D(self.quad_N, self.a, s)
-        roots, weights = roots.numpy(), weights.numpy()
-        return self.intg(G, (roots, weights))
 
     def intg(self, func: Callable, quadpoints: tuple =None) -> complex:
         """Integrator of the class.
@@ -366,6 +349,11 @@ class VPINN_HelmholtzImpedance(nn.Module):
         # Initialize weights and biases
         for lin in self.lins[:-1]:
             nn.init.ones_(lin.weight)
+            # gen = itertools.cycle([+1, -1])
+            # lin.weight = nn.Parameter(
+            #     torch.ones_like(lin.weight) *\
+            #     torch.tensor([next(gen) for _ in range(lin.weight.shape[0])]).view(-1, 1)
+            #     )
             # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
             # nn.init.normal_(lin.weight, mean=1., std=.5)
             lin.bias = nn.Parameter(-1 * torch.linspace(a - .005 * (b - a), b, layers[1] + 1).float()[:-1])
@@ -430,7 +418,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
                                         + loss_gb_re.pow(2) + loss_gb_im.pow(2))
                 loss += pen
 
-            if e % 100 == 0 or e == epochs:
+            if e % 10 == 0 or e == epochs:
                 # Calculate minutes elapsed
                 mins = int(self.time_elapsed // 60)
                 # Store the loss and the error

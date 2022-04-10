@@ -19,7 +19,7 @@ parser.add_argument('--params', type=str,
                     help='Network structure: DxxxNxxxKxxx', dest='params', required=True)
 
 parser.add_argument('--act', type=str, default='relu',
-                    choices=['relu', 'relu2', 'celu', 'gelu'],
+                    choices=['relu', 'relu2', 'celu', 'gelu', 'sigmoid', 'tanh'],
                     help='Activation function', dest='activation_type', required=False)
 
 parser.add_argument('--tfs', type=str, default='Finite Elements',
@@ -44,6 +44,9 @@ parser.add_argument('--pen', type=float, default=None,
 parser.add_argument('--init_optimal', type=ast.literal_eval, default=False,
                     help='Optimal initialization', dest='init_optimal', required=False)
 
+parser.add_argument('--plot_grads', type=ast.literal_eval, default=False,
+                    help='Save the plot of the gradients', dest='plot_grads', required=False)
+
 
 def main(args):
 
@@ -54,10 +57,11 @@ def main(args):
     dropout_probs = None
 
     # Define the parameters of the equation
-    f = lambda x: 10  # Source function
-    k = 2. * (np.pi / 2)  # frequency
+    f = lambda x: 5  # Source function
+    # k = 6. * (np.pi / 2)  # frequency
+    k = 1.  # frequency
     a, b = -1., +1.  # Domain
-    ga, gb = 5., 0.  # Values at the boundaries
+    ga, gb = 5., 2.  # Values at the boundaries
 
     # Activation function
     if args.activation_type == 'relu':
@@ -65,6 +69,10 @@ def main(args):
     elif args.activation_type == 'relu2':
         activation = lambda x: F.relu(x).pow(2)
         activation.__name__ = 'relu2'
+    elif args.activation_type == 'sigmoid':
+        activation = F.sigmoid
+    elif args.activation_type == 'tanh':
+        activation = F.tanh
     elif args.activation_type == 'celu':
         activation = F.celu
     elif args.activation_type == 'gelu':
@@ -148,11 +156,14 @@ def main(args):
 
             # Train
             optimizer = optim.SGD([
-            # {'params': model.lins[0].weight, 'lr': 5e-03},
-            # {'params': model.lins[0].bias, 'lr': 1e-04},
-            {'params': model.lins[1].weight, 'lr': lr},
-            {'params': model.lins[1].bias, 'lr': lr},
-            ], lr=lr, momentum=.5)
+                {'params': model.lins[0].weight, 'lr': 0},
+                {'params': model.lins[0].bias, 'lr': 0},
+                {'params': model.lins[1].weight, 'lr': lr},
+                {'params': model.lins[1].bias, 'lr': lr},
+            ],
+            lr=lr,
+            momentum=.5,
+            )
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma, last_epoch=-1)
             model.train_(testfunctions(), epochs, optimizer, scheduler, exact=(u, u_x))
 
@@ -222,9 +233,27 @@ def main(args):
             file = file_dir + experiment_name + '-params.png'
             plt.savefig(file)
 
+            # Plot the gradients
+            if args.plot_grads and model.epoch:
+                plt.rcParams['figure.figsize'] = [15, 10]
+                fig, axs = plt.subplots(3, 1)
+                fig.tight_layout(pad=4.0)
+                fig.suptitle(f'Gradient of the loss w.r.t the parameters of the model')
+                axs[0].scatter(np.arange(1, width + 1), model.lins[0].weight.grad.detach().view(-1).cpu().numpy(), label='$w_n$')
+                axs[1].scatter(np.arange(1, width + 1), model.lins[0].bias.grad.detach().view(-1).cpu().numpy(), label='$b_n$')
+                axs[2].scatter(np.arange(1, width + 1), model.lins[1].weight.grad[0].detach().view(-1).cpu().numpy(), label='$c^1_n$')
+                axs[2].scatter(np.arange(1, width + 1), model.lins[1].weight.grad[1].detach().view(-1).cpu().numpy(), label='$c^2_n$')
+                axs[2].scatter(0, model.lins[1].bias.grad[0].detach().view(-1).cpu().numpy(), label=f'$c^1_0$={model.lins[1].bias.grad[0].item():.2f}', color='black')
+                axs[2].scatter(0, model.lins[1].bias.grad[1].detach().view(-1).cpu().numpy(), label=f'$c^2_0$={model.lins[1].bias.grad[1].item():.2f}', color='black')
+                for ax in axs:
+                    ax.grid()
+                    ax.legend()
+                file = file_dir + experiment_name + '-grads.png'
+                plt.savefig(file)
+
             # Set the title of the plots
             title = f'\
-                k={round(model.k.item()/(np.pi/2))}π/2, \
+                k={model.k.item():.1f}, \
                 ga={model.ga_re.item()}+i{model.ga_im.item()}, \
                 gb={model.gb_re.item()}+i{model.gb_im.item()}, \
                 \nD={depth}, N={width}, K={testfuncs}\
