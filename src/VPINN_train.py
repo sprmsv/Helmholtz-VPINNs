@@ -56,12 +56,19 @@ def main(args):
     testfuncs = int(args.params[9:12])
     dropout_probs = None
 
-    # Define the parameters of the equation
-    f = lambda x: 5  # Source function
-    # k = 6. * (np.pi / 2)  # frequency
-    k = 1.  # frequency
-    a, b = -1., +1.  # Domain
-    ga, gb = 5., 2.  # Values at the boundaries
+    # SOURCE FUNCTION
+    f = lambda x: 5
+    f_x = lambda x: 0
+    # f = lambda x: x ** -.25
+    # f_x = lambda x: -.25 * x ** -1.75
+
+    # FREQUENCY
+    # k = 6. * (np.pi / 2)
+    k = 1.
+
+    # BOUNDARY
+    a, b = -1., +1.
+    ga, gb = 5., 2.
 
     # Activation function
     if args.activation_type == 'relu':
@@ -96,14 +103,9 @@ def main(args):
 
     # Get the exact solution
     exact = Exact_HelmholtzImpedance([f(0), 0], k, a, b, ga, gb, source='const')
+    # exact = Exact_HelmholtzImpedance([f, f_x], k, a, b, ga, gb, source=None)
     exact.verify()
-    u, u_x, u_xx = exact()
-
-    # Check that the solution satisfies boundary conditions
-    assert np.allclose(- u_x(a) - 1j * k * u(a), ga)
-    assert np.allclose(+ u_x(b) - 1j * k * u(b), gb)
-    for x in np.linspace(a, b, 100):
-        assert np.allclose(- u_xx(x) - k ** 2 * u(x), f(x))
+    u, u_x = exact()
 
     # Model
     model = VPINN_HelmholtzImpedance(f=f, k=k, a=a, b=b, ga=ga, gb=gb,
@@ -142,7 +144,7 @@ def main(args):
         if input('>> Enter "train" to perform the training: ') == 'train':
             # Training parameters
             epochs = int(float(input('Epochs: ')))
-            lr = float(input('Learning rate: '))
+            lr = [float(lr) for lr in input('Learning rate: ').split(" ")]
             # milestones = input('Scheduler milestones: ')
             # milestones = [int(m) for m in milestones.split(',')] if milestones else []
             # gamma = float(input('Scheduler gamma: '))
@@ -155,13 +157,13 @@ def main(args):
             })
 
             # Train
+            if len(lr) == 1: lr = lr * 4
             optimizer = optim.SGD([
-                {'params': model.lins[0].weight, 'lr': 0},
-                {'params': model.lins[0].bias, 'lr': 0},
-                {'params': model.lins[1].weight, 'lr': lr},
-                {'params': model.lins[1].bias, 'lr': lr},
+                {'params': model.lins[0].weight, 'lr': lr[0]},
+                {'params': model.lins[0].bias, 'lr': lr[1]},
+                {'params': model.lins[1].weight, 'lr': lr[2]},
+                {'params': model.lins[1].bias, 'lr': lr[3]},
             ],
-            lr=lr,
             momentum=.5,
             )
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma, last_epoch=-1)

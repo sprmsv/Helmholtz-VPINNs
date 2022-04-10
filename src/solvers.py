@@ -192,7 +192,6 @@ class FEM_HelmholtzImpedance():
 
 class Exact_HelmholtzImpedance():
 
-    # FIXME: General case is not right! uG_xx has a f(0) bias!
     def __init__(self, f: tuple, k: float,\
         a: float, b: float, ga: complex, gb: complex,\
         source: str =None):
@@ -210,12 +209,9 @@ class Exact_HelmholtzImpedance():
         self.quadpoints = (roots, weights)
 
     def verify(self):
-        u, u_x, u_xx = self()
+        u, u_x = self()
         assert np.allclose(- u_x(self.a) - 1j * self.k * u(self.a), self.ga)
         assert np.allclose(+ u_x(self.b) - 1j * self.k * u(self.b), self.gb)
-        for x in np.linspace(self.a, self.b, 100):
-            assert np.allclose(- u_xx(x) - self.k ** 2 * u(x),
-                self.f if self.source == 'const' else self.f(x))
 
     def w(self, x) -> Callable:
         return -np.exp(1j * self.k) / (2j * self.k)\
@@ -226,11 +222,6 @@ class Exact_HelmholtzImpedance():
         return -np.exp(1j * self.k) / 2\
             * (self.ga * np.exp(1j * self.k * x)
                 - self.gb * np.exp(-1j * self.k * x))
-
-    def w_xx(self, x) -> Callable:
-        return -np.exp(1j * self.k) / 2 * (1j * self.k)\
-            * (self.ga * np.exp(1j * self.k * x)
-                + self.gb * np.exp(-1j * self.k * x))
 
     def uG(self, x) -> Callable:
         if self.source == 'const':
@@ -247,14 +238,6 @@ class Exact_HelmholtzImpedance():
             G_x = lambda x, t: - .5 * np.sign(x - t) * np.exp(1j * self.k * np.abs(x - t))
             uG_x = self.intg(lambda s: G_x(x, s) * self.f(s))
         return uG_x
-
-    def uG_xx(self, x) -> Callable:
-        if self.source == 'const':
-            uG_xx = - self.f * (np.exp(1j * self.k) * np.cos(self.k * x))
-        else:
-            G_xx = lambda x, t: - .5 * (1j * self.k) * np.exp(1j * self.k * np.abs(x - t))
-            uG_xx = self.intg(lambda s: G_xx(x, s) * self.f(s))
-        return uG_xx
 
     def intg(self, func: Callable, quadpoints: tuple =None) -> complex:
         """Integrator of the class.
@@ -275,8 +258,7 @@ class Exact_HelmholtzImpedance():
     def __call__(self):
         u = lambda x: self.uG(x) + self.w(x)
         u_x = lambda x: self.uG_x(x) + self.w_x(x)
-        u_xx = lambda x: self.uG_xx(x) + self.w_xx(x)
-        return u, u_x, u_xx
+        return u, u_x
 
 class VPINN_HelmholtzImpedance(nn.Module):
 
