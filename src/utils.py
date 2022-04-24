@@ -52,8 +52,8 @@ def plot_validation(xpts, upts, rpts, title='Validation', subscript='', file=Non
     rpts_re = rpts[0]
     rpts_im = rpts[1]
 
-    plt.rcParams['figure.figsize'] = [15, 10]
-    fig, axs = plt.subplots(3, 2)
+    plt.rcParams['figure.figsize'] = [15, 7]
+    fig, axs = plt.subplots(2, 2)
     fig.tight_layout(pad=4.0)
     fig.suptitle(title)
 
@@ -64,15 +64,15 @@ def plot_validation(xpts, upts, rpts, title='Validation', subscript='', file=Non
     axs[0, 1].plot(xpts, rpts_im, label='$u^N'+subscript+'(x)$')
     axs[0, 1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)]$')
 
-    axs[1, 0].errorbar(xpts, upts_re, yerr=(upts_re - rpts_re), ecolor='black', label='$u'+subscript+'(x)$')
-    axs[1, 0].set(xlabel='x', ylabel='$Re[u'+subscript+'(x)]$')
-    axs[1, 1].errorbar(xpts, upts_im, yerr=(upts_im - rpts_im), ecolor='black', label='$u'+subscript+'(x)$')
-    axs[1, 1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)]$')
+    # axs[1, 0].errorbar(xpts, upts_re, yerr=(upts_re - rpts_re), ecolor='black', label='$u'+subscript+'(x)$')
+    # axs[1, 0].set(xlabel='x', ylabel='$Re[u'+subscript+'(x)]$')
+    # axs[1, 1].errorbar(xpts, upts_im, yerr=(upts_im - rpts_im), ecolor='black', label='$u'+subscript+'(x)$')
+    # axs[1, 1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)]$')
 
-    axs[2, 0].plot(xpts, upts_re - rpts_re)
-    axs[2, 0].set(xlabel='x', ylabel='$Re[u'+subscript+'(x)-u^N'+subscript+'(x)]$')
-    axs[2, 1].plot(xpts, upts_im - rpts_im)
-    axs[2, 1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)-u^N'+subscript+'(x)]$')
+    axs[1, 0].plot(xpts, upts_re - rpts_re)
+    axs[1, 0].set(xlabel='x', ylabel='$Re[u'+subscript+'(x)-u^N'+subscript+'(x)]$')
+    axs[1, 1].plot(xpts, upts_im - rpts_im)
+    axs[1, 1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)-u^N'+subscript+'(x)]$')
 
     for row in axs:
         for ax in row:
@@ -97,6 +97,13 @@ def plot_histories(dirs, file=None, fig=None, plot_error=True):
             info = json.load(f)
         with open(dir+'-train_history.json', 'r') as f:
             history = json.load(f)
-        plot_history(history, file=None, fig=fig, detailed=False, label='K: '+str(info['model']['activation']))
+        plot_history(
+            history, file=None, fig=fig, detailed=False,
+            label='D='+ str(info['model']['depth']) + ', N='+ str(info['model']['width']) + ', K=' + str(info['model']['testfuncs'])
+            )
+
+    for ax in fig.axes:
+        ax.grid(which='both')
+        ax.legend()
 
     if file: plt.savefig(file)

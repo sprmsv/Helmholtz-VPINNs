@@ -1,0 +1,77 @@
+\documentclass[12pt, a4paper]{article}
+\input{settings}
+
+\title{
+		\rule{\linewidth}{0.5mm}\\
+		\Large \textbf{{A Physics-Informed Neural Network For The Helmholtz Impedance Problem}}
+		\rule{\linewidth}{0.5mm}\\
+		\normalsize \today\\[1.5cm]
+}
+
+\author{
+	\begin{tabular}{lll}
+		\textit{Author:} & Sepehr Mousavi\\
+		& \\
+		\textit{Supervisors:} & Jan S. Hesthaven\\
+		\textit{} & Fernando José Henriquez Barraza\\
+	\end{tabular}
+}
+
+\lhead{
+	\small\textit{Master Semester Project}\\
+	\small\textit{A Physics-Informed Neural Network For The Helmholtz Impedance Problem}\\
+}
+% \chead{}
+\rhead{
+	\includegraphics[width=55pt]{img/logo.png}\\
+}
+% \rfoot{
+% 		\vspace{5pt}{\fontfamily{phv}\fontsize{5}{5}\selectfont Spring 2022, Sepehr Mousavi{},
+% 		\the\day.\the\month.\the\year, \thepage/\pageref{LastPage}}
+% }
+
+\bibliographystyle{unsrt}
+
+\begin{document}
+
+
+	\begin{titlepage}
+		\center
+
+		\makeatletter
+		\def\printauthor{{\centering \large \@author}}
+		\makeatother
+
+		\makeatletter
+		\def\printtitle{{\centering \@title\par}}
+		\makeatother
+
+		\textsc{
+			\large École Polytechnique Fédérale de Lausanne\\
+			\large Chair of Computational Mathematics and Simulation Science
+		}\\[1cm]
+		\vspace{3cm}
+		\printtitle
+		\vspace{2cm}
+		\printauthor
+		\vfill
+		\begin{figure}[h]
+			\centering
+			\includegraphics[width = 0.6\textwidth]{img/logo.png}
+		\end{figure}
+
+	\end{titlepage}
+
+	\tableofcontents
+	\thispagestyle{plain}
+	\newpage
+
+	\begin{abstract}
+		\input{abstract}
+	\end{abstract}
+
+	\input{body}
+	\bibliography{ref.bib}
+	\input{appendices}
+
+\end{document}

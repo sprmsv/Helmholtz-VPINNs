@@ -22,6 +22,9 @@ parser.add_argument('--act', type=str, default='relu',
                     choices=['relu', 'relu2', 'celu', 'gelu', 'sigmoid', 'tanh'],
                     help='Activation function', dest='activation_type', required=False)
 
+parser.add_argument('--freq', type=float, default=None,
+                    help='Frequency of the equation (k)', dest='freq', required=False)
+
 parser.add_argument('--tfs', type=str, default='Finite Elements',
                     choices=['Finite Elements', 'Legendre Polynomials'],
                     help='Test functions', dest='testfuncs_type', required=False)
@@ -41,11 +44,20 @@ parser.add_argument('--seed', type=int, default=None,
 parser.add_argument('--pen', type=float, default=None,
                     help='Penalty term coefficient', dest='penalty', required=False)
 
+parser.add_argument('--epochs', type=int, default=1000,
+                    help='Number of epochs', dest='epochs', required=False)
+
+parser.add_argument('--lr', type=float, default=1e-03,
+                    help='Learning rate', dest='lr', required=False)
+
 parser.add_argument('--init_optimal', type=ast.literal_eval, default=False,
                     help='Optimal initialization', dest='init_optimal', required=False)
 
 parser.add_argument('--plot_grads', type=ast.literal_eval, default=False,
                     help='Save the plot of the gradients', dest='plot_grads', required=False)
+
+parser.add_argument('--interactive', type=ast.literal_eval, default=False,
+                    help='Run in interactive mode', dest='interactive', required=False)
 
 
 def main(args):
@@ -59,12 +71,11 @@ def main(args):
     # SOURCE FUNCTION
     f = lambda x: 5
     f_x = lambda x: 0
-    # f = lambda x: x ** -.25
-    # f_x = lambda x: -.25 * x ** -1.75
+    # f = lambda x: x ** (-.25)
+    # f_x = lambda x: -.25 * x ** (-1.25)
 
     # FREQUENCY
-    # k = 6. * (np.pi / 2)
-    k = 1.
+    k = args.freq if args.freq else 6. * (np.pi / 2)
 
     # BOUNDARY
     a, b = -1., +1.
@@ -138,16 +149,22 @@ def main(args):
 
     stages = []
     while True:
-        if input('>> Enter "q" to quit: ') == 'q':
+        if args.interactive and input('>> Enter "q" to quit: ') == 'q':
             break
 
-        if input('>> Enter "train" to perform the training: ') == 'train':
+        if not args.interactive or input('>> Enter "train" to perform the training: ') == 'train':
             # Training parameters
-            epochs = int(float(input('Epochs: ')))
-            lr = [float(lr) for lr in input('Learning rate: ').split(" ")]
-            # milestones = input('Scheduler milestones: ')
-            # milestones = [int(m) for m in milestones.split(',')] if milestones else []
-            # gamma = float(input('Scheduler gamma: '))
+            if args.interactive:
+                epochs = int(float(input('Epochs: ')))
+                lr = float(input('Learning rate: '))
+                # milestones = input('Scheduler milestones: ')
+                # milestones = [int(m) for m in milestones.split(',')] if milestones else []
+                # gamma = float(input('Scheduler gamma: '))
+            else:
+                epochs = args.epochs
+                lr = args.lr
+                # milestones = args.milestones
+                # gamma = args.gamma
             milestones, gamma = [], .1
             stages.append({
                 'epochs': epochs,
@@ -157,19 +174,21 @@ def main(args):
             })
 
             # Train
-            if len(lr) == 1: lr = lr * 4
-            optimizer = optim.SGD([
-                {'params': model.lins[0].weight, 'lr': lr[0]},
-                {'params': model.lins[0].bias, 'lr': lr[1]},
-                {'params': model.lins[1].weight, 'lr': lr[2]},
-                {'params': model.lins[1].bias, 'lr': lr[3]},
-            ],
-            momentum=.5,
-            )
+            optimizer_params = []
+            for lin in model.lins[:-1]:
+                # optimizer_params.append({'params': lin.weight, 'lr': lr})
+                optimizer_params.append({'params': lin.bias, 'lr': lr})
+            optimizer_params.append({'params': model.lins[-1].weight, 'lr': lr})
+            optimizer_params.append({'params': model.lins[-1].bias, 'lr': lr})
+
+            optimizer = optim.Adam(
+                optimizer_params,
+                # momentum=.9,
+                )
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma, last_epoch=-1)
             model.train_(testfunctions(), epochs, optimizer, scheduler, exact=(u, u_x))
 
-        if input('>> Enter "save" to save the results: ') == 'save':
+        if not args.interactive or input('>> Enter "save" to save the results: ') == 'save':
             model.eval()
 
             # Create the directory
@@ -300,6 +319,9 @@ def main(args):
             )
 
             print(f'>> Results are stored in {file_dir} with the prefix "{experiment_name}-*.*".')
+
+        if not args.interactive:
+            break
 
     # H1-error
     errs = model.H1_error(u, u_x)

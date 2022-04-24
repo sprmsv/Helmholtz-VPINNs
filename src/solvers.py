@@ -16,7 +16,7 @@ class FEM_HelmholtzImpedance():
     """ Finite Element Method solver class for solving the 1D Helmholtz Impendace problem:
         - u_xx - k^2 * u = f
     in the domain (a, b), with impedance boundary conditions:
-        - u_x(a) + 1j * k * u(a) = ga
+        - u_x(a) - 1j * k * u(a) = ga
         + u_x(b) - 1j * k * u(b) = gb
     """
 
@@ -331,13 +331,6 @@ class VPINN_HelmholtzImpedance(nn.Module):
         # Initialize weights and biases
         for lin in self.lins[:-1]:
             nn.init.ones_(lin.weight)
-            # gen = itertools.cycle([+1, -1])
-            # lin.weight = nn.Parameter(
-            #     torch.ones_like(lin.weight) *\
-            #     torch.tensor([next(gen) for _ in range(lin.weight.shape[0])]).view(-1, 1)
-            #     )
-            # nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('relu'))
-            # nn.init.normal_(lin.weight, mean=1., std=.5)
             lin.bias = nn.Parameter(-1 * torch.linspace(a - .005 * (b - a), b, layers[1] + 1).float()[:-1])
             # nn.init.uniform_(lin.bias, a=a, b=b)
         nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
