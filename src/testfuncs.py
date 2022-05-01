@@ -15,7 +15,8 @@ class derivableFunction:
         assert self.derivs and i <= len(self.derivs)
         if i == 0:
             return self.func
-        return self.derivs[i - 1]
+        else:
+            return self.derivs[i - 1]
 
     def __call__(self, x: float):
         return self.func(x)
@@ -43,7 +44,7 @@ class Finite_Elements:
 
         elements = []
         for k in range(self.K + 1):
-            element = derivableFunction(self.phi(k), [self.phi_x(k),])
+            element = derivableFunction(self.phi(k), [self.phi_x(k), self.phi_xx(k)])
 
             # Define the local support domain of the element
             xm = self.x[k]
@@ -112,6 +113,17 @@ class Finite_Elements:
             elif self.dtype is np.ndarray:
                 return lambda x: step(x) * -(1 / self.h) * np.sign(x - xm)
 
+    def phi_xx(self, i: int) -> Callable:
+        """Returns the second derivative of the basis functions of the V_N subspace
+
+        Args:
+            i (int): Index of the basis function.
+
+        Returns:
+            Callable: The basis function.
+        """
+
+        return lambda x: 0
 
     def intphi(self, i: int, j: int) -> float:
         """Calculates int(phi_i * phi_j) over the domain, 0 <= i, j <= N.

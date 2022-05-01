@@ -210,8 +210,10 @@ class Exact_HelmholtzImpedance():
 
     def verify(self):
         u, u_x = self()
-        assert np.allclose(- u_x(self.a) - 1j * self.k * u(self.a), self.ga)
-        assert np.allclose(+ u_x(self.b) - 1j * self.k * u(self.b), self.gb)
+        # print(- u_x(self.a) - 1j * self.k * u(self.a), self.ga)
+        # print(+ u_x(self.b) - 1j * self.k * u(self.b), self.gb)
+        assert np.allclose(- u_x(self.a) - 1j * self.k * u(self.a), self.ga, atol=1e-04)
+        assert np.allclose(+ u_x(self.b) - 1j * self.k * u(self.b), self.gb, atol=1e-04)
 
     def w(self, x) -> Callable:
         return -np.exp(1j * self.k) / (2j * self.k)\
@@ -228,7 +230,10 @@ class Exact_HelmholtzImpedance():
             uG = - self.f / (self.k ** 2) * (1 - np.exp(1j * self.k) * np.cos(self.k * x))
         else:
             G = lambda x, t: - .5 / (1j * self.k) * np.exp(1j * self.k * np.abs(x - t))
-            uG = self.intg(lambda s: G(x, s) * self.f(s))
+            if hasattr(x, '__iter__'):
+                uG = np.array([self.intg(lambda s: G(x, s) * self.f(s)) for x in x])
+            else:
+                uG = self.intg(lambda s: G(x, s) * self.f(s))
         return uG
 
     def uG_x(self, x) -> Callable:
@@ -236,7 +241,10 @@ class Exact_HelmholtzImpedance():
             uG_x = - self.f / (self.k) * (np.exp(1j * self.k) * np.sin(self.k * x))
         else:
             G_x = lambda x, t: - .5 * np.sign(x - t) * np.exp(1j * self.k * np.abs(x - t))
-            uG_x = self.intg(lambda s: G_x(x, s) * self.f(s))
+            if hasattr(x, '__iter__'):
+                uG_x = np.array([self.intg(lambda s: G_x(x, s) * self.f(s)) for x in x])
+            else:
+                uG_x = self.intg(lambda s: G_x(x, s) * self.f(s))
         return uG_x
 
     def intg(self, func: Callable, quadpoints: tuple =None) -> complex:
@@ -253,6 +261,9 @@ class Exact_HelmholtzImpedance():
         if not quadpoints: quadpoints = self.quadpoints
         roots, weights = quadpoints
 
+        # print((roots[-1] - roots[0]) * np.sum([func(root) * weight for root, weight in zip(roots, weights)]) / 2)
+        # print((roots[-1] - roots[0]) * np.sum(func(roots) * weights) / 2)
+
         return (roots[-1] - roots[0]) * np.sum(func(roots) * weights) / 2
 
     def __call__(self):
@@ -263,8 +274,8 @@ class Exact_HelmholtzImpedance():
 class VPINN_HelmholtzImpedance(nn.Module):
 
     def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
-        ga: complex, gb: complex, *, layers=[1, 10, 2], activation=F.relu, dropout_probs=None,
-        res_id: int =2, penalty=None, quad_N=80, seed=None, cuda=False):
+        ga: complex, gb: complex, *, layers=[1, 10, 2], activation=torch.tanh,
+        penalty=None, quad_N=80, seed=None, cuda=False):
 
         # Ensure reproducibility
         if seed:
@@ -273,14 +284,11 @@ class VPINN_HelmholtzImpedance(nn.Module):
             # torch.use_deterministic_algorithms(True)
 
         # Check the validty of the inputs
-        if dropout_probs:
-            assert len(dropout_probs) == len(layers) - 2
         assert layers[-1] == 2
 
         # Initialize
         super().__init__()
         self.activation = activation
-        self.res_id = res_id
         self.device = torch.device('cuda') if cuda else torch.device('cpu')
         self.quad_N = quad_N
         self.history = {
@@ -312,43 +320,31 @@ class VPINN_HelmholtzImpedance(nn.Module):
         self.length = len(layers)  # Number of layers
         self.lins = nn.ModuleList()  # Linear blocks
         self.drops = nn.ModuleList()  # Dropout
-        # self.bns = nn.ModuleList()  # Batch-normalization
 
         # Define the hidden layers
         for input, output in zip(layers[0:-2], layers[1:-1]):
             self.lins.append(nn.Linear(input, output, bias=True))
-            # self.bns.append(nn.BatchNorm1d(output))
 
         # Define the output layer
         self.lins.append(nn.Linear(layers[-2], layers[-1], bias=True))
-        # self.bns.append(nn.BatchNorm1d(output))
-
-        # Assign drop-out probabilities
-        if dropout_probs:
-            for p in dropout_probs:
-                self.drops.append(nn.Dropout(p=p))
 
         # Initialize weights and biases
         for lin in self.lins[:-1]:
-            nn.init.ones_(lin.weight)
-            lin.bias = nn.Parameter(-1 * torch.linspace(a - .005 * (b - a), b, layers[1] + 1).float()[:-1])
-            # nn.init.uniform_(lin.bias, a=a, b=b)
-        nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('relu'))
+            nn.init.xavier_normal_(lin.weight, gain=nn.init.calculate_gain('tanh'))
+            nn.init.uniform_(lin.bias, a=a, b=b)
+            # lin.bias = nn.Parameter(-1 * torch.linspace(a, b, layers[1] + 1).float()[:-1])
+        nn.init.xavier_normal_(self.lins[-1].weight, gain=nn.init.calculate_gain('tanh'))
         nn.init.zeros_(self.lins[-1].bias)
 
     def forward(self, x):
-        # for i, f, bn in zip(range(self.length), self.lins, self.bns):
         for i, f in zip(range(self.length), self.lins):
             if i == len(self.lins) - 1:
             # Last layer
                 x = f(x)
-                # x = bn(x)  # Batch-normalization
             else:
             # Hidden layers
                 x = f(x)
-                # x = bn(x)  # Batch-normalization
                 x = self.activation(x)
-                # x = self.drops[i - 1](x)  # Drop-out
         return x
 
     def train_(self, testfunctions: list, epochs: int, optimizer, scheduler=None,
@@ -377,7 +373,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
             loss = 0
 
             for v_k in testfunctions:
-                loss += self.loss_v(v_k, i=self.res_id, quadpoints=v_k.quadpoints) / K
+                loss += self.loss_v(v_k, quadpoints=v_k.quadpoints) / K
 
             if self.penalty:
                 u_re = lambda x: self.deriv(0, x)[0]
@@ -411,13 +407,15 @@ class VPINN_HelmholtzImpedance(nn.Module):
                     print(f'{mins:03d}m elapsed :: Epoch {e:06d} / {epochs}: Loss = {loss.item():.3e}')
 
             optimizer.zero_grad()
-            loss.backward()
+            loss.backward(retain_graph=True)
             optimizer.step()
             scheduler.step()
             self.epoch += 1
             self.time_elapsed += time.process_time() - time_start
 
-    def loss_v(self, v_k: Callable, i: int, quadpoints: tuple):
+    def loss_v(self, v_k: Callable, quadpoints: tuple):
+
+        i = 2  # Formulation index
 
         F_k_re = self.intg(lambda x: self.f(x) * v_k(x), quadpoints)
         F_k_im = 0  # In case of complex source function
@@ -542,3 +540,69 @@ class VPINN_HelmholtzImpedance(nn.Module):
 
     def __len__(self):
         return self.length - 2  # Number of hidden layers / depth
+
+class VPINN_HelmholtzImpedanceHF(VPINN_HelmholtzImpedance):
+
+    def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
+        ga: complex, gb: complex, *, layers=[1, 10, 2], activation=torch.tanh,
+        penalty=None, quad_N=80, seed=None, cuda=False):
+
+            # Initialize
+            super().__init__(f, k, a, b, ga, gb,
+                    layers=layers, activation=activation,
+                    penalty=penalty, quad_N=quad_N, seed=seed, cuda=cuda)
+
+            self.A = 1 / 3
+            self.x0 = (self.a + self.b) / 2
+            self.beta = (self.b - self.a) / 2
+
+    def loss_v(self, v_k: Callable, quadpoints: tuple):
+
+        u_re = lambda x: self.deriv(0, x)[0]
+        u_im = lambda x: self.deriv(0, x)[1]
+        u_x_re = lambda x: self.deriv(1, x)[0]
+        u_x_im = lambda x: self.deriv(1, x)[1]
+        u_xx_re = lambda x: self.deriv(2, x)[0]
+        u_xx_im = lambda x: self.deriv(2, x)[1]
+
+        Lu_re = lambda x: u_xx_re(x) + self.k.pow(2) * u_re(x)
+        Lu_im = lambda x: u_xx_im(x) + self.k.pow(2) * u_im(x)
+        Lv = lambda x: v_k.deriv(2)(x) + self.k.pow(2) * v_k(x)
+        Mu_re = lambda x: (x - self.x0) * u_x_re(x) + self.k * self.beta * u_im(x)
+        Mu_im = lambda x: (x - self.x0) * u_x_im(x) - self.k * self.beta * u_re(x)
+        Mv_re = lambda x: (x - self.x0) * v_k.deriv(1)(x)
+        Mv_im = lambda x: - self.k * self.beta * v_k(x)
+
+        lhs_re = self.intg(lambda x: u_x_re(x) * v_k.deriv(1)(x), quadpoints) \
+            + self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x), quadpoints)\
+            + self.intg(lambda x: Lv(x) * (Mu_re(x) + self.A / self.k.pow(2) * Lu_re(x)), quadpoints)\
+            - self.k * (u_re(self.a) * Mv_im(self.a) - u_im(self.a) * Mv_re(self.a))\
+            - self.k * (u_re(self.b) * Mv_im(self.b) - u_im(self.b) * Mv_re(self.b))\
+            - (Mu_re(self.b) * v_k.deriv(1)(self.b)
+                - Mu_re(self.a) * v_k.deriv(1)(self.a))\
+            - ((self.b - self.x0) * self.k.pow(2) * u_re(self.b) * v_k(self.b)
+                - (self.a - self.x0) * self.k.pow(2) * u_re(self.a) * v_k(self.a))\
+            + ((self.b - self.x0) * u_x_re(self.b) * v_k.deriv(1)(self.b)
+                - (self.a - self.x0) * u_x_re(self.a) * v_k.deriv(1)(self.a))
+
+        lhs_im = self.intg(lambda x: u_x_im(x) * v_k.deriv(1)(x), quadpoints) \
+            + self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x), quadpoints)\
+            + self.intg(lambda x: Lv(x) * (Mu_im(x) + self.A / self.k.pow(2) * Lu_im(x)), quadpoints)\
+            - self.k * (u_re(self.a) * Mv_re(self.a) + u_im(self.a) * Mv_im(self.a))\
+            - self.k * (u_re(self.b) * Mv_re(self.b) + u_im(self.b) * Mv_im(self.b))\
+            - (Mu_im(self.b) * v_k.deriv(1)(self.b)
+                - Mu_im(self.a) * v_k.deriv(1)(self.a))\
+            - ((self.b - self.x0) * self.k.pow(2) * u_im(self.b) * v_k(self.b)
+                - (self.a - self.x0) * self.k.pow(2) * u_im(self.a) * v_k(self.a))\
+            + ((self.b - self.x0) * u_x_im(self.b) * v_k.deriv(1)(self.b)
+                - (self.a - self.x0) * u_x_im(self.a) * v_k.deriv(1)(self.a))
+
+        rhs_re = self.intg(lambda x: self.f(x) * (Mv_re(x) - self.A / self.k.pow(2) * Lv(x)), quadpoints)\
+            + Mv_re(self.a) * self.ga_re + Mv_im(self.a) * self.ga_im\
+            + Mv_re(self.b) * self.gb_re + Mv_im(self.b) * self.gb_im
+
+        rhs_im = self.intg(lambda x: self.f(x) * (- Mv_im(x)), quadpoints)\
+            + Mv_re(self.a) * self.ga_im - Mv_im(self.a) * self.ga_re\
+            + Mv_re(self.b) * self.gb_im - Mv_im(self.b) * self.gb_re
+
+        return (lhs_re - rhs_re).pow(2) + (lhs_im - rhs_im).pow(2)

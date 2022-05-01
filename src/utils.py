@@ -97,13 +97,14 @@ def plot_histories(dirs, file=None, fig=None, plot_error=True):
             info = json.load(f)
         with open(dir+'-train_history.json', 'r') as f:
             history = json.load(f)
+
         plot_history(
             history, file=None, fig=fig, detailed=False,
             label='D='+ str(info['model']['depth']) + ', N='+ str(info['model']['width']) + ', K=' + str(info['model']['testfuncs'])
             )
 
     for ax in fig.axes:
-        ax.grid(which='both')
+        ax.grid()
         ax.legend()
 
     if file: plt.savefig(file)

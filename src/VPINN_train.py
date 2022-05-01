@@ -8,8 +8,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
+import math
 
-from solvers import Exact_HelmholtzImpedance, VPINN_HelmholtzImpedance
+from solvers import Exact_HelmholtzImpedance, VPINN_HelmholtzImpedance, VPINN_HelmholtzImpedanceHF
 from testfuncs import Finite_Elements, Legendre_Polynomials
 from utils import plot_history, plot_validation
 
@@ -21,6 +22,9 @@ parser.add_argument('--params', type=str,
 parser.add_argument('--act', type=str, default='relu',
                     choices=['relu', 'relu2', 'celu', 'gelu', 'sigmoid', 'tanh'],
                     help='Activation function', dest='activation_type', required=False)
+
+parser.add_argument('--hf', type=ast.literal_eval, default=False,
+                    help='Whether to use HF formulation', dest='hf', required=False)
 
 parser.add_argument('--freq', type=float, default=None,
                     help='Frequency of the equation (k)', dest='freq', required=False)
@@ -66,13 +70,16 @@ def main(args):
     depth = int(args.params[1:4])
     width = int(args.params[5:8])
     testfuncs = int(args.params[9:12])
-    dropout_probs = None
 
     # SOURCE FUNCTION
+    f_const = True
     f = lambda x: 5
     f_x = lambda x: 0
-    # f = lambda x: x ** (-.25)
-    # f_x = lambda x: -.25 * x ** (-1.25)
+
+    # f_const = False
+    # f = lambda x: 10 * torch.sin(x)  # pytorch version
+    # f_ = lambda x: 10 * np.sin(x)  # numpy version
+    # f_x_ = lambda x: 10 * np.cos(x)  # numpy version
 
     # FREQUENCY
     k = args.freq if args.freq else 6. * (np.pi / 2)
@@ -82,19 +89,15 @@ def main(args):
     ga, gb = 5., 2.
 
     # Activation function
-    if args.activation_type == 'relu':
-        activation = F.relu
-    elif args.activation_type == 'relu2':
-        activation = lambda x: F.relu(x).pow(2)
-        activation.__name__ = 'relu2'
+    if args.activation_type == 'tanh':
+        activation = torch.tanh
     elif args.activation_type == 'sigmoid':
-        activation = F.sigmoid
-    elif args.activation_type == 'tanh':
-        activation = F.tanh
-    elif args.activation_type == 'celu':
-        activation = F.celu
-    elif args.activation_type == 'gelu':
-        activation = F.gelu
+        activation = torch.sigmoid
+    elif args.activation_type == 'relu':
+        activation = torch.relu
+    elif args.activation_type == 'relu2':
+        activation = lambda x: torch.relu(x).pow(2)
+        activation.__name__ = 'relu2'
     else:
         raise ValueError('Activation function not recognized.')
 
@@ -113,16 +116,17 @@ def main(args):
         f'D{depth:03d}N{width:03d}K{testfuncs:03d}-{testfunctions.__name__}-{activation.__name__}'
 
     # Get the exact solution
-    exact = Exact_HelmholtzImpedance([f(0), 0], k, a, b, ga, gb, source='const')
-    # exact = Exact_HelmholtzImpedance([f, f_x], k, a, b, ga, gb, source=None)
+    exact = Exact_HelmholtzImpedance([f(0), 0] if f_const else [f_, f_x_],
+                                    k, a, b, ga, gb,
+                                    source='const' if f_const else None)
     exact.verify()
     u, u_x = exact()
 
     # Model
-    model = VPINN_HelmholtzImpedance(f=f, k=k, a=a, b=b, ga=ga, gb=gb,
+    solver = VPINN_HelmholtzImpedance if not args.hf else VPINN_HelmholtzImpedanceHF
+    model = solver(f=f, k=k, a=a, b=b, ga=ga, gb=gb,
                                     layers=[1] + [width for _ in range(depth)] + [2],
                                     activation=activation,
-                                    dropout_probs=dropout_probs,
                                     penalty=args.penalty,
                                     quad_N=100,
                                     seed=args.seed,
@@ -176,7 +180,7 @@ def main(args):
             # Train
             optimizer_params = []
             for lin in model.lins[:-1]:
-                # optimizer_params.append({'params': lin.weight, 'lr': lr})
+                optimizer_params.append({'params': lin.weight, 'lr': lr})
                 optimizer_params.append({'params': lin.bias, 'lr': lr})
             optimizer_params.append({'params': model.lins[-1].weight, 'lr': lr})
             optimizer_params.append({'params': model.lins[-1].bias, 'lr': lr})
@@ -205,7 +209,6 @@ def main(args):
                     'testfuncs': testfuncs,
                     'testfunctions': testfunctions.__name__,
                     'activation': activation.__name__,
-                    'dropout_probs': dropout_probs,
                     'penalty': args.penalty,
                 },
                 'H1-error': model.history['errors']['tot'][-1] if model.history['errors'] else None,
@@ -216,7 +219,6 @@ def main(args):
                 'seed': args.seed,
                 'device': model.device.type,
                 'equation': {
-                    # 'f': f.__name__,
                     'k': k,
                     'a': a,
                     'b': b,
@@ -282,12 +284,12 @@ def main(args):
 
             # Plot the solutions
             xpts = torch.linspace(a, b, 301).float().view(-1, 1)
-            upts_re, upts_im = u(xpts).real, u(xpts).imag
+            upts_re, upts_im = u(xpts.numpy().reshape(-1)).real, u(xpts.numpy().reshape(-1)).imag
             rpts_re, rpts_im = model.deriv(0, xpts.to(model.device))
             with torch.no_grad():
                 xpts = xpts.numpy().reshape(-1)
-                upts_re = upts_re.numpy().reshape(-1)
-                upts_im = upts_im.numpy().reshape(-1)
+                upts_re = upts_re.reshape(-1)
+                upts_im = upts_im.reshape(-1)
                 rpts_re = rpts_re.cpu().numpy().reshape(-1)
                 rpts_im = rpts_im.cpu().numpy().reshape(-1)
 
@@ -301,13 +303,13 @@ def main(args):
 
             # Plot the derivatives
             xpts = torch.linspace(a, b, 301).float().view(-1, 1)
-            upts_re, upts_im = u_x(xpts).real, u_x(xpts).imag
+            upts_re, upts_im = u_x(xpts.numpy().reshape(-1)).real, u_x(xpts.numpy().reshape(-1)).imag
             xpts.requires_grad_()
             rpts_re, rpts_im = model.deriv(1, xpts.to(model.device))
             with torch.no_grad():
                 xpts = xpts.numpy().reshape(-1)
-                upts_re = upts_re.numpy().reshape(-1)
-                upts_im = upts_im.numpy().reshape(-1)
+                upts_re = upts_re.reshape(-1)
+                upts_im = upts_im.reshape(-1)
                 rpts_re = rpts_re.cpu().numpy().reshape(-1)
                 rpts_im = rpts_im.cpu().numpy().reshape(-1)
             file = file_dir + experiment_name + '-der.png'
