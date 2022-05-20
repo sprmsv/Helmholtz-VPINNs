@@ -101,6 +101,7 @@ def plot_histories(dirs, file=None, fig=None, plot_error=True):
         plot_history(
             history, file=None, fig=fig, detailed=False,
             label='D='+ str(info['model']['depth']) + ', N='+ str(info['model']['width']) + ', K=' + str(info['model']['testfuncs'])
+            # label='$k=%.1f$' % info['equation']['k'],
             )
 
     for ax in fig.axes:

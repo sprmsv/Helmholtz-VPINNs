@@ -13,6 +13,7 @@ import math
 from solvers import Exact_HelmholtzImpedance, VPINN_HelmholtzImpedance, VPINN_HelmholtzImpedanceHF
 from testfuncs import Finite_Elements, Legendre_Polynomials
 from utils import plot_history, plot_validation
+from quadrature_rules import gauss_lobatto_jacobi_quadrature1D
 
 parser = argparse.ArgumentParser()
 
@@ -54,8 +55,9 @@ parser.add_argument('--epochs', type=int, default=1000,
 parser.add_argument('--lr', type=float, default=1e-03,
                     help='Learning rate', dest='lr', required=False)
 
-parser.add_argument('--init_optimal', type=ast.literal_eval, default=False,
-                    help='Optimal initialization', dest='init_optimal', required=False)
+parser.add_argument('--init', type=str, default='random',
+                    choices=['perfect', 'random', 'ls'],
+                    help='initialization mode', dest='init', required=False)
 
 parser.add_argument('--plot_grads', type=ast.literal_eval, default=False,
                     help='Save the plot of the gradients', dest='plot_grads', required=False)
@@ -74,7 +76,8 @@ def main(args):
     # SOURCE FUNCTION
     f_const = True
     f = lambda x: 5
-    f_x = lambda x: 0
+    f_ = None
+    f_x_ = None
 
     # f_const = False
     # f = lambda x: 10 * torch.sin(x)  # pytorch version
@@ -103,8 +106,8 @@ def main(args):
 
     # Test functions
     if args.testfuncs_type == 'Finite Elements':
-        testfunctions = Finite_Elements(testfuncs - 1, a, b, dtype=torch.Tensor
-            , device=torch.device('cuda') if args.cuda else torch.device('cpu'))
+        testfunctions = Finite_Elements(testfuncs - 1, a, b, dtype=torch.Tensor,
+            device=torch.device('cuda') if args.cuda else torch.device('cpu'))
     elif args.testfuncs_type == 'Legendre Polynomials':
         testfunctions = Legendre_Polynomials(testfuncs - 1, a, b)
     else:
@@ -134,8 +137,8 @@ def main(args):
                                     )
     if args.cuda: model = model.cuda()
 
-    # Initialize close to the solution to check the convergence
-    if args.init_optimal:
+    # Initialize close to the solution to check the convergence (For ReLU)
+    if args.init == 'perfect' and depth == 1:
         points = torch.linspace(a - 1e-06, b, width + 1).float()
         derivs = torch.zeros_like(model.lins[1].weight)
         for i, point, next in zip(range(width), points[:-1], points[1:]):
@@ -150,6 +153,47 @@ def main(args):
         model.lins[0].bias = nn.Parameter(-1 * points[:-1])
         model.lins[1].weight = nn.Parameter(steps.float())
         model.lins[1].bias = nn.Parameter(torch.tensor([u(a).real, u(a).imag]).float())
+
+    elif args.init == 'ls' and depth == 1:
+        biases = -k * 1 * torch.linspace(a, b, width).float()
+        weights = k * 1 * torch.ones_like(model.lins[0].weight)
+        model.lins[0].weight = nn.Parameter(weights)
+        model.lins[0].bias = nn.Parameter(biases)
+
+        # Define quadrature points for each test function
+        tfs = testfunctions()
+        for v_k in tfs:
+            if v_k.domain_:
+                xl = v_k.domain_[0].item()
+                xr = v_k.domain_[2].item()
+                roots, weights = gauss_lobatto_jacobi_quadrature1D(model.quad_N, xl, xr)
+                roots = roots.float().view(-1, 1).to(model.device).requires_grad_()
+                weights = weights.float().view(-1, 1).to(model.device)
+                v_k.quadpoints = (roots, weights)
+            else:
+                v_k.quadpoints = model.quadpoints
+
+        A = np.zeros((len(tfs), width), dtype=complex)
+        for col in range(width):
+            cs = torch.zeros_like(model.lins[1].weight)
+            cs[:, col] = 1.
+            model.lins[1].weight = nn.Parameter(cs)
+            model.lins[1].bias = nn.Parameter(torch.zeros_like(model.lins[1].bias))
+            for row in range(len(tfs)):
+                v_k = tfs[row]
+                lhs_re, lhs_im, _, _ = model.lhsrhs_v(v_k, quadpoints=v_k.quadpoints)
+                A[row, col] = lhs_re.item() + 1j * lhs_im.item()
+
+        D = np.zeros((len(tfs)), dtype=complex)
+        for row in range(len(tfs)):
+            v_k = tfs[row]
+            _, _, rhs_re, rhs_im = model.lhsrhs_v(v_k, quadpoints=v_k.quadpoints)
+            D[row] = rhs_re.item() + 1j* rhs_im.item()
+
+        c = np.linalg.lstsq(A, D, rcond=None)[0]
+        cs = torch.tensor([c.real, c.imag]).float().to(model.device)
+        model.lins[1].weight = nn.Parameter(cs)
+        model.lins[1].bias = nn.Parameter(torch.zeros_like(model.lins[1].bias))
 
     stages = []
     while True:
@@ -186,8 +230,9 @@ def main(args):
             optimizer_params.append({'params': model.lins[-1].bias, 'lr': lr})
 
             optimizer = optim.Adam(
+            # optimizer = optim.SGD(
                 optimizer_params,
-                # momentum=.9,
+                # momentum=.5,
                 )
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma, last_epoch=-1)
             model.train_(testfunctions(), epochs, optimizer, scheduler, exact=(u, u_x))
@@ -207,8 +252,8 @@ def main(args):
                     'depth': depth,
                     'width': width,
                     'testfuncs': testfuncs,
-                    'testfunctions': testfunctions.__name__,
-                    'activation': activation.__name__,
+                    'testfunctions': args.testfuncs_type,
+                    'activation': args.activation_type,
                     'penalty': args.penalty,
                 },
                 'H1-error': model.history['errors']['tot'][-1] if model.history['errors'] else None,

@@ -413,57 +413,36 @@ class VPINN_HelmholtzImpedance(nn.Module):
             self.epoch += 1
             self.time_elapsed += time.process_time() - time_start
 
-    def loss_v(self, v_k: Callable, quadpoints: tuple):
+    def lhsrhs_v(self, v_k: Callable, quadpoints: tuple):
 
-        i = 2  # Formulation index
 
-        F_k_re = self.intg(lambda x: self.f(x) * v_k(x), quadpoints)
-        F_k_im = 0  # In case of complex source function
 
         u_re = lambda x: self.deriv(0, x)[0]
         u_im = lambda x: self.deriv(0, x)[1]
+        u_x_re = lambda x: self.deriv(1, x)[0]
+        u_x_im = lambda x: self.deriv(1, x)[1]
 
-        if i == 1:
-            u_xx_re = lambda x: self.deriv(2, x)[0]
-            u_xx_im = lambda x: self.deriv(2, x)[1]
+        lhs_re = self.intg(lambda x: u_x_re(x) * v_k.deriv(1)(x), quadpoints) \
+            - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x), quadpoints)\
+            + self.k * u_im(self.a) * v_k(self.a)\
+            + self.k * u_im(self.b) * v_k(self.b)
+        lhs_im = self.intg(lambda x: u_x_im(x) * v_k.deriv(1)(x), quadpoints) \
+            - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x), quadpoints)\
+            - self.k * u_re(self.a) * v_k(self.a)\
+            - self.k * u_re(self.b) * v_k(self.b)
 
-            R_k_re = - self.intg(lambda x: u_xx_re(x) * v_k(x), quadpoints) \
-                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x), quadpoints)
+        rhs_re = self.intg(lambda x: self.f(x) * v_k(x), quadpoints)\
+            + (self.ga_re) * v_k(self.a)\
+            + (self.gb_re) * v_k(self.b)
+        rhs_im = 0\
+            + (self.ga_im) * v_k(self.a)\
+            + (self.gb_im) * v_k(self.b)
 
-            R_k_im = - self.intg(lambda x: u_xx_im(x) * v_k(x)) \
-                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x), quadpoints)
+        return lhs_re, lhs_im, rhs_re, rhs_im
 
-        elif i == 2:
-            u_x_re = lambda x: self.deriv(1, x)[0]
-            u_x_im = lambda x: self.deriv(1, x)[1]
-
-            R_k_re = self.intg(lambda x: u_x_re(x) * v_k.deriv(1)(x), quadpoints) \
-                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x), quadpoints)\
-                - (self.ga_re - self.k * u_im(self.a)) * v_k(self.a)\
-                - (self.gb_re - self.k * u_im(self.b)) * v_k(self.b)
-
-            R_k_im = self.intg(lambda x: u_x_im(x) * v_k.deriv(1)(x), quadpoints) \
-                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x), quadpoints)\
-                - (self.ga_im + self.k * u_re(self.a)) * v_k(self.a)\
-                - (self.gb_im + self.k * u_re(self.b)) * v_k(self.b)
-
-        elif i == 3:
-            R_k_re = - self.intg(lambda x: u_re(x) * v_k.deriv(2)(x), quadpoints) \
-                - self.k.pow(2) * self.intg(lambda x: u_re(x) * v_k(x), quadpoints)\
-                - (self.ga_re - self.k * u_im(self.a)) * v_k(self.a)\
-                - (self.gb_re - self.k * u_im(self.b)) * v_k(self.b)\
-                + (u_re(self.b) * v_k.deriv(1)(self.b)) - (u_re(self.a) * v_k.deriv(1)(self.a))
-
-            R_k_im = - self.intg(lambda x: u_im(x) * v_k.deriv(2)(x), quadpoints) \
-                - self.k.pow(2) * self.intg(lambda x: u_im(x) * v_k(x), quadpoints)\
-                - (self.ga_im + self.k * u_re(self.a)) * v_k(self.a)\
-                - (self.gb_im + self.k * u_re(self.b)) * v_k(self.b)\
-                + (u_im(self.b) * v_k.deriv(1)(self.b)) - (u_im(self.a) * v_k.deriv(1)(self.a))
-
-        else:
-            raise ValueError(f'{i} is not a valid input for VPINN_HelmholtzImpedance.loss().')
-
-        return (R_k_re - F_k_re).pow(2) + (R_k_im - F_k_im).pow(2)
+    def loss_v(self, v_k: Callable, quadpoints: tuple):
+        lhs_re, lhs_im, rhs_re, rhs_im = self.lhsrhs_v(v_k, quadpoints)
+        return (lhs_re - rhs_re).pow(2) + (lhs_im - rhs_im).pow(2)
 
     def deriv(self, n: int, x: torch.tensor):
         if n not in [0, 1, 2]:
@@ -554,9 +533,10 @@ class VPINN_HelmholtzImpedanceHF(VPINN_HelmholtzImpedance):
 
             self.A = 1 / 3
             self.x0 = (self.a + self.b) / 2
-            self.beta = (self.b - self.a) / 2
+            # self.beta = (self.b - self.a) / 2
+            self.beta = 50
 
-    def loss_v(self, v_k: Callable, quadpoints: tuple):
+    def lhsrhs_v(self, v_k: Callable, quadpoints: tuple):
 
         u_re = lambda x: self.deriv(0, x)[0]
         u_im = lambda x: self.deriv(0, x)[1]
@@ -605,4 +585,4 @@ class VPINN_HelmholtzImpedanceHF(VPINN_HelmholtzImpedance):
             + Mv_re(self.a) * self.ga_im - Mv_im(self.a) * self.ga_re\
             + Mv_re(self.b) * self.gb_im - Mv_im(self.b) * self.gb_re
 
-        return (lhs_re - rhs_re).pow(2) + (lhs_im - rhs_im).pow(2)
+        return lhs_re, lhs_im, rhs_re, rhs_im
