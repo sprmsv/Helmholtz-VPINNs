@@ -154,11 +154,12 @@ def main(args):
         model.lins[1].weight = nn.Parameter(steps.float())
         model.lins[1].bias = nn.Parameter(torch.tensor([u(a).real, u(a).imag]).float())
 
-    elif args.init == 'ls' and depth == 1:
-        biases = -k * 1 * torch.linspace(a, b, width).float()
-        weights = k * 1 * torch.ones_like(model.lins[0].weight)
-        model.lins[0].weight = nn.Parameter(weights)
-        model.lins[0].bias = nn.Parameter(biases)
+    elif args.init == 'ls':
+        for d in range(depth):
+            biases = -k ** (.5) * torch.linspace(a, b, width).float()
+            weights = k ** (.5) * torch.ones_like(model.lins[d].weight)
+            model.lins[d].weight = nn.Parameter(weights)
+            model.lins[d].bias = nn.Parameter(biases)
 
         # Define quadrature points for each test function
         tfs = testfunctions()
@@ -175,10 +176,10 @@ def main(args):
 
         A = np.zeros((len(tfs), width), dtype=complex)
         for col in range(width):
-            cs = torch.zeros_like(model.lins[1].weight)
+            cs = torch.zeros_like(model.lins[-1].weight)
             cs[:, col] = 1.
-            model.lins[1].weight = nn.Parameter(cs)
-            model.lins[1].bias = nn.Parameter(torch.zeros_like(model.lins[1].bias))
+            model.lins[-1].weight = nn.Parameter(cs)
+            model.lins[-1].bias = nn.Parameter(torch.zeros_like(model.lins[-1].bias))
             for row in range(len(tfs)):
                 v_k = tfs[row]
                 lhs_re, lhs_im, _, _ = model.lhsrhs_v(v_k, quadpoints=v_k.quadpoints)
@@ -192,8 +193,8 @@ def main(args):
 
         c = np.linalg.lstsq(A, D, rcond=None)[0]
         cs = torch.tensor([c.real, c.imag]).float().to(model.device)
-        model.lins[1].weight = nn.Parameter(cs)
-        model.lins[1].bias = nn.Parameter(torch.zeros_like(model.lins[1].bias))
+        model.lins[-1].weight = nn.Parameter(cs)
+        model.lins[-1].bias = nn.Parameter(torch.zeros_like(model.lins[-1].bias))
 
     stages = []
     while True:
