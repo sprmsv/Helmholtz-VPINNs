@@ -155,11 +155,10 @@ def main(args):
         model.lins[1].bias = nn.Parameter(torch.tensor([u(a).real, u(a).imag]).float())
 
     elif args.init == 'ls':
-        for d in range(depth):
-            biases = -k ** (.5) * torch.linspace(a, b, width).float()
-            weights = k ** (.5) * torch.ones_like(model.lins[d].weight)
-            model.lins[d].weight = nn.Parameter(weights)
-            model.lins[d].bias = nn.Parameter(biases)
+        biases = -k ** (1) * torch.linspace(a, b, width).float()
+        weights = k ** (1) * torch.ones_like(model.lins[-2].weight)
+        model.lins[-2].weight = nn.Parameter(weights)
+        model.lins[-2].bias = nn.Parameter(biases)
 
         # Define quadrature points for each test function
         tfs = testfunctions()
