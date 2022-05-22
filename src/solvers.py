@@ -343,8 +343,7 @@ class VPINN_HelmholtzImpedance(nn.Module):
                 x = f(x)
             else:
             # Hidden layers
-                x = f(x)
-                x = self.activation(x)
+                x = self.activation(f(x))
         return x
 
     def train_(self, testfunctions: list, epochs: int, optimizer, scheduler=None,
@@ -586,3 +585,27 @@ class VPINN_HelmholtzImpedanceHF(VPINN_HelmholtzImpedance):
             + Mv_re(self.b) * self.gb_im - Mv_im(self.b) * self.gb_re
 
         return lhs_re, lhs_im, rhs_re, rhs_im
+
+class VPINN_HelmholtzImpedanceRF(VPINN_HelmholtzImpedance):
+    def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
+    ga: complex, gb: complex, *, layers=[1, 10, 10, 10, 2], activation=torch.tanh,
+    penalty=None, quad_N=80, seed=None, cuda=False):
+
+        # Initialize
+        assert len(layers) >= 5, "this network only works for D > 2."
+        super().__init__(f, k, a, b, ga, gb,
+                layers=layers, activation=activation,
+                penalty=penalty, quad_N=quad_N, seed=seed, cuda=cuda)
+
+    def forward(self, x):
+        for i, f in zip(range(self.length), self.lins):
+            if i == len(self.lins) - 1:
+            # Last layer
+                x = f(x)
+            elif i in [0, 1]:
+            # First two hidden layers
+                x = torch.relu(f(x))
+            else:
+            # other hidden layers
+                x = self.activation(f(x))
+        return x

@@ -1,19 +1,20 @@
-import os
-import json
 import argparse
 import ast
+import json
+import math
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn, optim
-import math
 
-from solvers import Exact_HelmholtzImpedance, VPINN_HelmholtzImpedance, VPINN_HelmholtzImpedanceHF
+from quadrature_rules import gauss_lobatto_jacobi_quadrature1D
+from solvers import (Exact_HelmholtzImpedance, VPINN_HelmholtzImpedance,
+                     VPINN_HelmholtzImpedanceHF, VPINN_HelmholtzImpedanceRF)
 from testfuncs import Finite_Elements, Legendre_Polynomials
 from utils import plot_history, plot_validation
-from quadrature_rules import gauss_lobatto_jacobi_quadrature1D
 
 parser = argparse.ArgumentParser()
 
@@ -24,8 +25,9 @@ parser.add_argument('--act', type=str, default='relu',
                     choices=['relu', 'relu2', 'celu', 'gelu', 'sigmoid', 'tanh'],
                     help='Activation function', dest='activation_type', required=False)
 
-parser.add_argument('--hf', type=ast.literal_eval, default=False,
-                    help='Whether to use HF formulation', dest='hf', required=False)
+parser.add_argument('--solver', type=str, default='regular',
+                    choices=['regular', 'hf', 'rf'],
+                    help='Vpinns solver class', dest='solver', required=False)
 
 parser.add_argument('--freq', type=float, default=None,
                     help='Frequency of the equation (k)', dest='freq', required=False)
@@ -56,7 +58,7 @@ parser.add_argument('--lr', type=float, default=1e-03,
                     help='Learning rate', dest='lr', required=False)
 
 parser.add_argument('--init', type=str, default='random',
-                    choices=['perfect', 'random', 'ls'],
+                    choices=['random', 'ls'],
                     help='initialization mode', dest='init', required=False)
 
 parser.add_argument('--plot_grads', type=ast.literal_eval, default=False,
@@ -126,42 +128,39 @@ def main(args):
     u, u_x = exact()
 
     # Model
-    solver = VPINN_HelmholtzImpedance if not args.hf else VPINN_HelmholtzImpedanceHF
-    model = solver(f=f, k=k, a=a, b=b, ga=ga, gb=gb,
-                                    layers=[1] + [width for _ in range(depth)] + [2],
-                                    activation=activation,
-                                    penalty=args.penalty,
-                                    quad_N=100,
-                                    seed=args.seed,
-                                    cuda=args.cuda,
-                                    )
+    modelsettings = dict(f=f, k=k, a=a, b=b, ga=ga, gb=gb,
+        layers=[1] + [width for _ in range(depth)] + [2],
+        activation=activation,
+        penalty=args.penalty,
+        quad_N=100,
+        seed=args.seed,
+        cuda=args.cuda,
+        )
+    if args.solver == 'regular':
+        solver = VPINN_HelmholtzImpedance
+    elif args.solver == 'hf':
+        solver = VPINN_HelmholtzImpedanceHF
+    elif args.solver == 'rf':
+        solver = VPINN_HelmholtzImpedanceRF
+    model = solver(**modelsettings)
     if args.cuda: model = model.cuda()
 
-    # Initialize close to the solution to check the convergence (For ReLU)
-    if args.init == 'perfect' and depth == 1:
-        points = torch.linspace(a - 1e-06, b, width + 1).float()
-        derivs = torch.zeros_like(model.lins[1].weight)
-        for i, point, next in zip(range(width), points[:-1], points[1:]):
-            derivs[0, i] = .5 * (u_x(point).real + u_x(next).real)
-            derivs[1, i] = .5 * (u_x(point).imag + u_x(next).imag)
-        steps = derivs.clone()
-        for i in range(width - 1):
-            steps[0, i + 1] = derivs[0, i + 1] - derivs[0, i]
-            steps[1, i + 1] = derivs[1, i + 1] - derivs[1, i]
-
-        model.lins[0].weight = nn.Parameter(torch.ones_like(model.lins[0].weight))
-        model.lins[0].bias = nn.Parameter(-1 * points[:-1])
-        model.lins[1].weight = nn.Parameter(steps.float())
-        model.lins[1].bias = nn.Parameter(torch.tensor([u(a).real, u(a).imag]).float())
-
     elif args.init == 'ls':
+        # Create a new model for using it's lhsrhs method
+        md = VPINN_HelmholtzImpedance(**modelsettings)
+        # Initialize the first layer of both models
         biases = -k ** (1) * torch.linspace(a, b, width).float()
         weights = k ** (1) * torch.ones_like(model.lins[-2].weight)
+        md.lins[-2].weight = nn.Parameter(weights)
+        md.lins[-2].bias = nn.Parameter(biases)
         model.lins[-2].weight = nn.Parameter(weights)
         model.lins[-2].bias = nn.Parameter(biases)
 
+        # Define the test functions for initialization (hat functions)
+        tfs = Finite_Elements(testfuncs - 1, a, b, dtype=torch.Tensor,
+            device=torch.device('cuda') if args.cuda else torch.device('cpu'))()
+
         # Define quadrature points for each test function
-        tfs = testfunctions()
         for v_k in tfs:
             if v_k.domain_:
                 xl = v_k.domain_[0].item()
@@ -175,19 +174,19 @@ def main(args):
 
         A = np.zeros((len(tfs), width), dtype=complex)
         for col in range(width):
-            cs = torch.zeros_like(model.lins[-1].weight)
+            cs = torch.zeros_like(md.lins[-1].weight)
             cs[:, col] = 1.
-            model.lins[-1].weight = nn.Parameter(cs)
-            model.lins[-1].bias = nn.Parameter(torch.zeros_like(model.lins[-1].bias))
+            md.lins[-1].weight = nn.Parameter(cs)
+            md.lins[-1].bias = nn.Parameter(torch.zeros_like(md.lins[-1].bias))
             for row in range(len(tfs)):
                 v_k = tfs[row]
-                lhs_re, lhs_im, _, _ = model.lhsrhs_v(v_k, quadpoints=v_k.quadpoints)
+                lhs_re, lhs_im, _, _ = md.lhsrhs_v(v_k, quadpoints=v_k.quadpoints)
                 A[row, col] = lhs_re.item() + 1j * lhs_im.item()
 
         D = np.zeros((len(tfs)), dtype=complex)
         for row in range(len(tfs)):
             v_k = tfs[row]
-            _, _, rhs_re, rhs_im = model.lhsrhs_v(v_k, quadpoints=v_k.quadpoints)
+            _, _, rhs_re, rhs_im = md.lhsrhs_v(v_k, quadpoints=v_k.quadpoints)
             D[row] = rhs_re.item() + 1j* rhs_im.item()
 
         c = np.linalg.lstsq(A, D, rcond=None)[0]
