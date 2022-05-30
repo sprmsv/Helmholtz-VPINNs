@@ -45,6 +45,31 @@ def plot_history(history, file=None, fig=None, detailed=True, label=None):
 
     if file: plt.savefig(file)
 
+def plot_validation_single(xpts, upts, rpts, title='Validation', subscript='', file=None):
+
+    upts_re = upts[0]
+    upts_im = upts[1]
+    rpts_re = rpts[0]
+    rpts_im = rpts[1]
+
+    plt.rcParams['figure.figsize'] = [15, 3]
+    fig, axs = plt.subplots(1, 2)
+    fig.tight_layout(pad=4.0)
+    fig.suptitle(title)
+
+    axs[0].plot(xpts, upts_re, label='$u'+subscript+'(x)$')
+    axs[0].plot(xpts, rpts_re, label='$u^N'+subscript+'(x)$')
+    axs[0].set(xlabel='x', ylabel='$Re[u'+subscript+'(x)]$')
+    axs[1].plot(xpts, upts_im, label='$u'+subscript+'(x)$')
+    axs[1].plot(xpts, rpts_im, label='$u^N'+subscript+'(x)$')
+    axs[1].set(xlabel='x', ylabel='$Im[u'+subscript+'(x)]$')
+
+    for ax in axs:
+        ax.grid()
+        ax.legend(loc='upper right')
+
+    if file: plt.savefig(file)
+
 def plot_validation(xpts, upts, rpts, title='Validation', subscript='', file=None):
 
     upts_re = upts[0]
@@ -98,10 +123,11 @@ def plot_histories(dirs, file=None, fig=None, plot_error=True):
         with open(dir+'-train_history.json', 'r') as f:
             history = json.load(f)
 
+        label = 'D='+ str(info['model']['depth']) + ', N='+ str(info['model']['width']) + ', K=' + str(info['model']['testfuncs'])
+
         plot_history(
             history, file=None, fig=fig, detailed=False,
-            label='D='+ str(info['model']['depth']) + ', N='+ str(info['model']['width']) + ', K=' + str(info['model']['testfuncs'])
-            # label='$k=%.1f$' % info['equation']['k'],
+            label=label,
             )
 
     for ax in fig.axes:

@@ -14,7 +14,7 @@ from quadrature_rules import gauss_lobatto_jacobi_quadrature1D
 from solvers import (Exact_HelmholtzImpedance, VPINN_HelmholtzImpedance,
                      VPINN_HelmholtzImpedanceHF, VPINN_HelmholtzImpedanceRF)
 from testfuncs import Finite_Elements, Legendre_Polynomials
-from utils import plot_history, plot_validation
+from utils import plot_history, plot_validation, plot_validation_single
 
 parser = argparse.ArgumentParser()
 
@@ -145,12 +145,12 @@ def main(args):
     model = solver(**modelsettings)
     if args.cuda: model = model.cuda()
 
-    elif args.init == 'ls':
+    if args.init == 'ls':
         # Create a new model for using it's lhsrhs method
         md = VPINN_HelmholtzImpedance(**modelsettings)
         # Initialize the first layer of both models
-        biases = -k ** (1) * torch.linspace(a, b, width).float()
-        weights = k ** (1) * torch.ones_like(model.lins[-2].weight)
+        weights = torch.normal(mean=(k**.75), std=(k**.2), size=(width, 1))
+        biases = -weights[:, 0] * torch.linspace(a, b, width).float()
         md.lins[-2].weight = nn.Parameter(weights)
         md.lins[-2].bias = nn.Parameter(biases)
         model.lins[-2].weight = nn.Parameter(weights)
@@ -229,9 +229,7 @@ def main(args):
             optimizer_params.append({'params': model.lins[-1].bias, 'lr': lr})
 
             optimizer = optim.Adam(
-            # optimizer = optim.SGD(
                 optimizer_params,
-                # momentum=.5,
                 )
             scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=milestones, gamma=gamma, last_epoch=-1)
             model.train_(testfunctions(), epochs, optimizer, scheduler, exact=(u, u_x))
