@@ -145,11 +145,14 @@ def main(args):
     model = solver(**modelsettings)
     if args.cuda: model = model.cuda()
 
+    # Least-squares initialization
     if args.init == 'ls':
+        # This initialization is only implemented for shallow networks
+        assert depth == 1
         # Create a new model for using it's lhsrhs method
         md = VPINN_HelmholtzImpedance(**modelsettings)
         # Initialize the first layer of both models
-        weights = torch.normal(mean=(k**.75), std=(k**.2), size=(width, 1))
+        weights = torch.normal(mean=(k**.80), std=(k**.5), size=(width, 1))
         biases = -weights[:, 0] * torch.linspace(a, b, width).float()
         md.lins[-2].weight = nn.Parameter(weights)
         md.lins[-2].bias = nn.Parameter(biases)

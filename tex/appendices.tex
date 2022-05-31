@@ -1,6 +1,5 @@
 \appendix
 
-
 \section{Appendix: The \texttt{VPINN\_HelmholtzImpedanceRF} Network} \label{app:deeprf}
 \autoref{lst:deeprf} includes the code implementation of the proposed network on top of the parent class. In this structure, we use a local version of ReLU as the activation function of the first hidden layer, and a sinusoidal (hyperbolic tangent) activation function for other hidden layers. The idea is to impose different behaviors for different regions of the domain. \autoref{fig:deeprftrain} shows that without any other consideration, training such a network fails. The solution of the failed training is shown in \autoref{fig:deeprfsol}. Some other similar structures have been tried out, which also failed. Among those were putting the ReLU activation function only on the last layer, and non-local ReLU activation functions on the first two layers.
 
