@@ -1,7 +1,5 @@
 class VPINN_HelmholtzImpedanceRF(VPINN_HelmholtzImpedance):
-    def __init__(self, f: Union[Callable, float], k: float, a: float, b: float,
-    ga: complex, gb: complex, *, layers=[1, 10, 10, 10, 2], activation=torch.tanh,
-    penalty=None, quad_N=80, seed=None, cuda=False):
+    def __init__(self, f: Union[Callable, float], k: float, a: float, b: float, ga: complex, gb: complex, *, layers=[1, 10, 10, 10, 2], activation=torch.tanh, penalty=None, quad_N=80, seed=None, cuda=False):
 
         # Initialize
         assert len(layers) >= 5, "this network only works for D > 2."
