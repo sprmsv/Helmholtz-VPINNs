@@ -5,7 +5,7 @@ The Helmholtz equation has the general form
     \label{eq:general}
     -\nabla^2{u(\underline{x})} - k^2 u(\underline{x}) = f(\underline{x}), \qquad \underline{x} \in \Omega,
 \end{equation}
-where $k \in \mathbb{R}$ is often called the wave number of the equation since larger values of this parameter result in more oscillating solutions. This equation represents a time-harmonic form of the wave equation after applying the Fourier transform and often arises in various physical problems such as seismology~\cite{alkhalifah2021} and acoustics~\cite{sun2015}. As will be shown in the following sections, there are some difficulties regarding solving this equation, especially for high wave number $k$. Graham et al.~\cite{graham2012} have studied the performance of multiple iterative methods such as Krylov methods~\cite{fan2018} and multi-grid methods~\cite{xu2016} for the Helmholtz equation. They suggested that for solving this equation, hand-tailored techniques might be beneficial to improving the performance.
+where $k \in \mathbb{R}_{+}$ is often called the wave number of the equation since larger values of this parameter result in more oscillating solutions. This equation represents a time-harmonic form of the wave equation after applying the Fourier transform and often arises in various physical problems such as seismology~\cite{alkhalifah2021} and acoustics~\cite{sun2015}. As will be shown in the following sections, there are some difficulties regarding solving this equation, especially for high wave number $k$. Graham et al.~\cite{graham2012} have studied the performance of multiple iterative methods such as Krylov methods~\cite{fan2018} and multi-grid methods~\cite{xu2016} for the Helmholtz equation. They suggested that for solving this equation, hand-tailored techniques might be beneficial to improving the performance.
 
 In this work, we will consider the one-dimensional Helmholtz equation with impedance boundary conditions in the domain $\Omega=(a, b)$
 \begin{equation}
@@ -56,7 +56,7 @@ which could be replaced into \eqref{eq:tested} to eliminate the second derivativ
         u'(+1)v(+1) = (g_b+\imath ku(+1))v(+1),
     \end{aligned}
 \end{equation}
-we get the variational formulation of the Helmholtz Impedance problem, which is to find $u \in {H^{1}(\Omega)}$ such that $\mathsf{a}(u,v) = l(v)$ for all $v \in {H^{1}(\Omega)}$, where $\mathsf{a}: H^{1}(\Omega) \times H^{1}(\Omega) \to \mathbb{C}$ and $l: H^{1}(\Omega) \to \mathbb{C}$ are defined as
+we get the variational formulation of the Helmholtz impedance problem, which is to find $u \in {H^{1}(\Omega)}$ such that $\mathsf{a}(u,v) = l(v)$ for all $v \in {H^{1}(\Omega)}$, where $\mathsf{a}: H^{1}(\Omega) \times H^{1}(\Omega) \to \mathbb{C}$ and $l: H^{1}(\Omega) \to \mathbb{C}$ are defined as
 \begin{equation}
     \label{eq:varlhs}
     \mathsf{a}(u, v) = \int_{-1}^{+1}{u'v'dx} - k^2 \int_{-1}^{+1}{uvdx} - \imath k (u(-1)v(-1) + u(+1)v(+1))
@@ -68,25 +68,40 @@ we get the variational formulation of the Helmholtz Impedance problem, which is 
 
 
 \subsubsection{Coercive Variational Formulation}\label{sec:coerciveformulation}
-Another version of the variational formulation of the Helmholtz Impedance problem is presented and analyzed in \cite{moiola2014}. This formulation is proposed as a coercive formulation to overcome one of the challenges of the original variational formulation of the Helmholtz Impedance problem. A modification of this formulation for the one dimensional case is provided in \cite{henriquez2022}, which is presented in this section. Let $u, v \in L^2(\Omega)$ and consider $\Omega=(-1,+1)$. For $k, \beta \in \mathbb{R}$, set $\mathcal{L}v= v''+k^2v$ and define
+Another version of the variational formulation of the Helmholtz impedance problem is presented and analyzed in \cite{moiola2014}. This formulation is proposed as a coercive formulation to overcome one of the challenges of the original variational formulation of the Helmholtz impedance problem. The accuracy and the convergence rate of the FEM with this new formulation is analyzed in \cite{diwan2018}. In this section, we present a modification of this formulation for the one-dimensional case in the domain $\Omega=(-1,+1)$. Let us consider the Hilbert space $V:= H^2(\Omega)$ with the inner product $(.,.)_V : V \times V \to \mathbb{C}$ defined as
 \begin{equation}
-    \mathcal{M}v=xv'-\imath k \beta v.
+    \begin{aligned}
+        (u, v)_V := & k^2(u,v)_{L^2(\Omega)} + (u',v')_{L^2(\Omega)} + k^{-2}(u'',v'')_{L^2(\Omega)} \\
+        & + 2k^2 \left( u(-1)\overline{v(-1)} + u(+1)\overline{v(+1)} \right)\\
+        & + k^2 \left( u'(-1)\overline{v'(-1)} + u'(+1)\overline{v'(+1)} \right), \quad u,v \in V
+    \end{aligned}
 \end{equation}
-Consider the sesquilinear form $\mathsf{a}: H^2(\Omega)\times H^2(\Omega) \to \mathbb{C}$ defined as
+and the induced norm $\left\| . \right\|_V := \sqrt{(.,.)_V}$, where $(.,.)_{L^2(\Omega)}$ corresponds to the $L^2(\Omega)$-inner product in $\Omega$. For $k, \beta \in \mathbb{R}_{+}$, we define the sesquilinear form $\mathsf{a}: V \times V \to \mathbb{C}$ as
 \begin{equation}
     \label{eq:coercivelhs}
     \begin{split}
-        \mathsf{a}(u, v) & := \int_{\Omega}{u'\bar{v}'dx} + k^2 \int_{\Omega}{u\bar{v}dx} + \int_{\Omega} \left ( \mathcal{M}u + \frac{A}{k^2}\mathcal{L}u\right )\overline{\mathcal{L}v}dx \\ & - \imath k (\overline{\mathcal{M}v(b)}u(b) + \overline{\mathcal{M}v(a)}u(a)) - \bar{v}'\mathcal{M}u|_{\partial \Omega} - xk^2u\bar{v}|_{\partial \Omega} + xu'\bar{v}'|_{\partial \Omega}
+        \mathsf{a}(u, v) & := \int_{\Omega}{u'\overline{v'}dx} + k^2 \int_{\Omega}{u\overline{v}dx} + \int_{\Omega} \left ( \mathcal{M}u + \frac{A}{k^2}\mathcal{L}u\right )\overline{\mathcal{L}v}dx \\ & - \imath k (\overline{\mathcal{M}v(b)}u(b) + \overline{\mathcal{M}v(a)}u(a)) - \overline{v'}\mathcal{M}u|_{\partial \Omega} - xk^2u\overline{v}|_{\partial \Omega} + xu'\overline{v'}|_{\partial \Omega}
     \end{split}
 \end{equation}
-and the linear form $l: H^2(\Omega) \to \mathbb{C}$ defined as
+and the linear form $l: V \to \mathbb{C}$ as
 \begin{equation}
     \label{eq:coerciverhs}
     l(v) := \int_{\Omega}{\left ( \overline{\mathcal{M}v} - \frac{A}{k^2} \overline{\mathcal{L}v} \right )fdx + \overline{\mathcal{M}v(b)}g_b + \overline{\mathcal{M}v(a)}g_a},
 \end{equation}
-where $A>0 \in \mathbb{R}$. The problem would be defined as finding $u \in H^2(\Omega)$ such that $\mathsf{a}(u,v)=l(v)$ for all $v \in H^2(\Omega)$. As suggested in \cite{henriquez2022}, setting $\beta = 1$ and $A = 1/3$ makes the sesquilinear form $\mathsf{a}: H^2(\Omega) \times H^2(\Omega) \to \mathbb{C}$ coercive.
+where $A \in \mathbb{R}_{+}$ and the operators $\mathcal{M}$ and $\mathcal{L}$ are defined as
+\begin{equation}
+    \begin{aligned}
+        \mathcal{M}v:=xv'-\imath k \beta v,\\
+        \mathcal{L}v:= v''+k^2v.
+    \end{aligned}
+\end{equation}
+The problem would be defined as finding $u \in V$ such that $\mathsf{a}(u,v)=l(v)$ for all $v \in V$. It could be proved that setting $\beta = 1$ and $A = 1/3$ makes the sesquilinear form $\mathsf{a}: V \times V \to \mathbb{C}$ V-elliptic according to
+\begin{equation}
+    \mathfrak{R}\{\mathsf{a}(u, v) \} \ge \gamma \left\| v \right\|_V^2 \quad \forall v \in V,
+\end{equation}
+where $\gamma = \dfrac{1}{6}$.
 
-\subsection{Framework of the Finite Element Method}\label{sec:femframework}
+\subsection{The Finite Element Method}\label{sec:femframework}
 We define $N+1$ basis functions as
 \begin{equation}
     \label{eq:fembasisfuncs}
@@ -96,7 +111,7 @@ We define $N+1$ basis functions as
         0, \qquad \qquad otherwise,
         \end{matrix}\right.
 \end{equation}
-where $x_j = -1 + 2j/N$ for $j = 0, 1, \cdots, N$. Just in sake of completeness of the formulation we define the ghost points $x_{-1} = a$, and $x_{N+1} = b$. The resulting basis functions with $N=9$ are illustrated in \autoref{fig:fembases}. Let $V_N = span(\varphi_j)_{j=0, \cdots, N}$ be a finite-dimensional subspace of $H^{1}(\Omega)$. We search for solutions in this subspace, and modify the variational version of the Helmholtz Impedance problem as finding $u_N \in V_N$ such that $\mathsf{a}(u_N,v_N) = l(v_N)$ for all $v_N \in V_N$, where $\mathsf{a}(u,v)$ and $l(v)$ are defined in Equations \eqref{eq:varlhs} and \eqref{eq:varrhs}, respectively. It can easily be shown that it is sufficient to ensure that the aforementioned equation is satisfied for all the basis functions $\varphi_i,\:i=0, \cdots, N$:
+where $x_j = -1 + 2j/N$ for $j = 0, 1, \cdots, N$. Just in sake of completeness of the formulation we define the ghost points $x_{-1} = a$, and $x_{N+1} = b$. The resulting basis functions with $N=9$ are illustrated in \autoref{fig:fembases}. Let $V_N = span(\varphi_j)_{j=0, \cdots, N}$ be a finite-dimensional subspace of $H^{1}(\Omega)$. We search for solutions in this subspace, and modify the variational version of the Helmholtz impedance problem as finding $u_N \in V_N$ such that $\mathsf{a}(u_N,v_N) = l(v_N)$ for all $v_N \in V_N$, where $\mathsf{a}(u,v)$ and $l(v)$ are defined in Equations \eqref{eq:varlhs} and \eqref{eq:varrhs}, respectively. It can easily be shown that it is sufficient to ensure that the aforementioned equation is satisfied for all the basis functions $\varphi_i,\:i=0, \cdots, N$:
 \begin{equation}
     \label{eq:femvar}
     \mathsf{a}(u_N,\varphi_i) = b(\varphi_i).
@@ -134,7 +149,7 @@ The solution of this system of equations could be calculated using methods such 
     \label{fig:fembases}
 \end{figure}
 
-\subsection{Framework and Structure of the VPINNs Scheme}\label{sec:vpinnsframework}
+\subsection{Framework of the VPINNs Scheme}\label{sec:vpinnsframework}
 
 \subsubsection{Multilayer Perceptron}\label{sec:vpinnsmlp}
 Let $\mathcal{N}$ be the space of a fully-connected multilayer perceptron (MLP) with 1 node at the input layer, $N$ nodes on each of $D$ hidden layers, and 2 nodes at the output layer as depicted in \autoref{fig:vpinndeepmlp}. The 2 dimensional output represents the real and the imaginary parts of the solution: $u_N(x) = u_{N,1}(x) + \imath u_{N,2}(x)$. In the case of shallow networks, it could be easily shown that this will be the same as using complex model parameters. For this generic architecture of the MLP, each element of the the two-dimensional solution could be expressed as
@@ -173,7 +188,7 @@ With this architecture, the network has $2N$ parameters for the first hidden lay
 where $N_p$ is the total number of parameters of the network.
 
 \subsubsection{Variational Formulation for VPINNs}\label{sec:vpinnsformulation}
-Let $V_K = span(v_1, v_2, \cdots, v_K)$ be the space of the test functions. The Helmholtz Impedance problem in the context of VPINNs is defined as finding $u_{\mathcal{N}} \in \mathcal{N}$ such that the loss function
+Let $V_K = span(v_1, v_2, \cdots, v_K)$ be the space of the test functions. The Helmholtz impedance problem in the context of VPINNs is defined as finding $u_{\mathcal{N}} \in \mathcal{N}$ such that the loss function
 \begin{equation}
     \label{eq:lossfunction}
     \mathcal{L}(u_{\mathcal{N}}) = \frac{1}{K} \sum_{k=1}^{K}{\left|a(u_{\mathcal{N}},v_k)-l(v_k)\right| ^2}
@@ -200,7 +215,7 @@ The integrals appearing in the loss function of the VPINNs scheme defined in \eq
     \label{eq:quadrature}
     \int_{a}^{b}h(x)dx \simeq \sum_{i=1}^{N_q}{w_i h(x_i)},
 \end{equation}
-where ${(w_i)}_{i=1}^{N_q}$ are the quadrature weights, and ${(x_i)}_{i=1}^{N_q} \subset \bar{\Omega}$ are the quadrature points. When using test functions with local support (such as finite element hat functions defined in \eqref{eq:fembasisfuncs}), the quadrature points should be chosen carefully. Since these test functions are only defined in a subset of the whole domain, choosing global quadrature points results in a poor approximation of the integral. Therefore, we use local quadrature points to evaluate the integrals that involve test functions with local support, and global quadrature points when the function being integrated is globally defined.
+where ${(w_i)}_{i=1}^{N_q}$ are the quadrature weights, and ${(x_i)}_{i=1}^{N_q} \subset \overline{\Omega}$ are the quadrature points. When using test functions with local support (such as finite element hat functions defined in \eqref{eq:fembasisfuncs}), the quadrature points should be chosen carefully. Since these test functions are only defined in a subset of the whole domain, choosing global quadrature points results in a poor approximation of the integral. Therefore, we use local quadrature points to evaluate the integrals that involve test functions with local support, and global quadrature points when the function being integrated is globally defined.
 
 \section{Results and Discussion}\label{sec:results}
 The frameworks described in the previous section are implemented and their results are presented and discussed in this section. We define the error of the solution as the $H^1{(\Omega)}$ norm of difference between the analytical solution $u(x)$, and the solution of the numerical scheme $u_N(x)$:
@@ -231,7 +246,7 @@ and use this error as a measure to evaluate the solution from each numerical sch
 \end{figure}
 
 \subsection{Finite Element Method}\label{sec:femresults}
-Implementing the framework described in Section~\ref{sec:femframework}, we investigated the results of the finite element method for the Helmholtz Impedance problem with different wave numbers. The results for a relatively moderate $k$ validated against the exact solution are presented in Figures \ref{fig:femMidfreqN050} and \ref{fig:femMidfreqN100}. These plots show how using a finer mesh, i.e. bigger $N$, on the domain improves the quality of the solution. The same trend has been observed for other $k$'s.
+Implementing the framework described in Section~\ref{sec:femframework}, we investigate the results of the finite element method for the Helmholtz impedance problem with different wave numbers. The results for a relatively moderate $k$ validated against the exact solution are presented in Figures \ref{fig:femMidfreqN050} and \ref{fig:femMidfreqN100}. These plots show how using a finer mesh on the domain, i.e. corresponding to a bigger $N$, improves the quality of the solution. The same trend has been observed for other $k$'s.
 
 \begin{figure}[h!]
     \centering
@@ -258,7 +273,7 @@ However, for larger values of $k$, there is an issue with this method. From the 
 \end{figure}
 
 \subsection{VPINNs Scheme}\label{sec:vpinnsresults}
-Implementing the framework explained in Section~\ref{sec:vpinnsframework}, we investigated the performance of this scheme for different network architecture, different activation functions, different initialization techniques, different formulations, and for different wave numbers $k$. The Adam optimizer~\cite{adamoptimizer} is used for all the trainings. Except for the results presented in Section~\ref{sec:lsinitresults}, the weights of each layer are initialized using the normal Xavier initialization~\cite{xavierinitialization}, and the biases are initialized using a uniform distribution in the domain $\Omega$. This initialization, when compared to the least-squares initialization presented in Section~\ref{sec:lsinit}, will be called random initialization. In all the trainings except the ones with the coercive variational formulation presented in Section~\ref{sec:coerciveformulation} where the first $K$ Legendre polynomials are used, we use the local hat functions defined by \eqref{eq:fembasisfuncs} for the test functions. Each training is done multiple times to ensure independence from randomness and the best one is selected for comparisons. The biggest learning rate $lr$ that ensures convergence and accuracy for most of the networks being compared turned out to be $0.05$ (unless stated otherwise), which is kept fix in all the comparisons.
+Implementing the framework explained in Section~\ref{sec:vpinnsframework}, we investigate the performance of this scheme for different network architecture, different activation functions, different initialization techniques, different formulations, and for different wave numbers $k$. The Adam optimizer~\cite{adamoptimizer} is used for all the trainings. Except for the results presented in Section~\ref{sec:lsinitresults}, the weights of each layer are initialized using the normal Xavier initialization~\cite{xavierinitialization}, and the biases are initialized using a uniform distribution in the domain $\Omega$. This initialization, when compared to the least-squares initialization presented in Section~\ref{sec:lsinit}, will be called random initialization. In all the trainings except the ones with the coercive variational formulation presented in Section~\ref{sec:coerciveformulation} where the first $K$ Legendre polynomials are used, we use the local hat functions defined by \eqref{eq:fembasisfuncs} for the test functions. Each training is done multiple times to ensure independence from randomness and the best one is selected for comparisons. The biggest learning rate $lr$ that ensures convergence and accuracy for most of the networks being compared turned out to be $0.05$ (unless stated otherwise), which is kept fix in all the comparisons.
 
 \subsubsection{Shallow Networks} \label{sec:vpinnsshallowresults}
 
@@ -452,7 +467,7 @@ In order to investigate the behavior of the network using the coercive variation
 However, the advantages of the coercive formulation reveal themselves when being compared to the regular formulation with Legendre polynomials. Comparing the difference of these two methods for $k=4$ and $k=8$, we can see that as the wave number increases, the advantages of the coercive formulation become more significant. This brings up the idea that using this formulation in conjunction with suitable test functions in $H^2(\Omega)$ with local support could lead to better convergence rates for high wave numbers.
 
 \section{Conclusion}\label{sec:conclusion}
-In Section~\ref{sec:femresults}, we showed that although the Helmholtz Impedance problem could be solved by the finite element method accurately and efficiently, the first-order convergence (in the case of using the hat test functions) only starts after a certain level of refinement, and as the wave number $k$ increases, this critical level of refinement goes higher. This motivated us to implement a VPINNs scheme for this problem and investigate the effect of different configurations of the network on its performance. These observations can eventually be put together to craft some specialized techniques to get a better performance in high wave numbers.
+In Section~\ref{sec:femresults}, we showed that although the Helmholtz impedance problem could be solved by the finite element method accurately and efficiently, the first-order convergence (in the case of using the hat test functions) only starts after a certain level of refinement, and as the wave number $k$ increases, this critical level of refinement goes higher. This motivated us to implement a VPINNs scheme for this problem and investigate the effect of different configurations of the network on its performance. These observations can eventually be put together to craft some specialized techniques to get a better performance in high wave numbers.
 
 In Section~\ref{sec:vpinnsshallowresults}, we observed that the hyperbolic tangent is the most suitable activation function for this setup, and kept using this activation function in the rest of the experiments. By doing several experiments with different network widths ($N$) and different number of test functions ($K$), we also observed that the best refinement approach for shallow networks is to increase these two hyper-parameters correlated to each other. In Section~\ref{sec:deepnetworks}, we investigated the existence of a similar correlation with the depth of the network and concluded that the correlation should be defined on the number of parameters of the network, and proposed to scale the number of test functions with the square root of the number of parameters of the network. We also showed that with adequate width, increasing the depth of the network is a better approach than increasing its width, in terms of convergence time.
 
