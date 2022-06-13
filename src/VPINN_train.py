@@ -30,7 +30,7 @@ parser.add_argument('--solver', type=str, default='regular',
                     help='Vpinns solver class', dest='solver', required=False)
 
 parser.add_argument('--freq', type=float, default=None,
-                    help='Frequency of the equation (k)', dest='freq', required=False)
+                    help='Frequency of the equation (k)', dest='freq', required=True)
 
 parser.add_argument('--tfs', type=str, default='Finite Elements',
                     choices=['Finite Elements', 'Legendre Polynomials'],
