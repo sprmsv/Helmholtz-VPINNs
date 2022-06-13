@@ -1,4 +1,4 @@
-# CS-433 Project 2: Road Segmentation Using U-net
+# Variational Physics-Informed Neural Networks For the Helmholtz Impedance Problem
 
 A framework for solving the 1D Helmholtz equation with impedance boundary conditions is provided: 1. Finite element solver; 2. Variational Physics-Informed Neural Network (VPINN) solver. The latter is an implementation of this paper. More details on the methodology are provided in `./tex/Report.pdf`.
 
