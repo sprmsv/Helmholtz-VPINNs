@@ -1,0 +1,4 @@
+# Jupyter notebook
+*.ipynb linguist-vendored=true
+# Latex files
+tex/*   linguist-documentation=true
